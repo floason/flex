@@ -3,10 +3,10 @@
 
 #include <stdio.h>
 
-#include "git_hash.h"
+#include "flex_version.h"
 
 int main()
 {
-    printf("Hello world\n%ld\n%s\n", __STDC_VERSION__, GIT_HASH);
+    printf("Hello world\n%ld\n%s\n%d.%d.%d\n", __STDC_VERSION__, GIT_HASH, MAJOR, MINOR, PATCH);
     return 0;
 }

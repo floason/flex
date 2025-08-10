@@ -1,0 +1,10 @@
+// floason (C) 2025
+// Licensed under the MIT License.
+
+#pragma once
+
+#include "git_hash.h"
+
+#define MAJOR @flex_VERSION_MAJOR@
+#define MINOR @flex_VERSION_MINOR@
+#define PATCH @flex_VERSION_PATCH@
