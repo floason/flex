@@ -1,0 +1,3 @@
+# Omit CMake folders.
+.cache/
+build/
