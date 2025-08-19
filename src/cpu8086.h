@@ -70,8 +70,6 @@ enum location_type
 
 struct location
 {
-    struct bus* bus;
-
     enum location_type type;
     uintptr_t address;
     bool virtual;

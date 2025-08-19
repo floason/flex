@@ -67,34 +67,42 @@ static struct opcode op_table[] =
     { "ADD", 0, LOC_RM, LOC_REG, false, NULL }
 };
 
-static inline uint8_t loc_read_byte(struct location* loc)
+static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
 {
     if (loc->virtual)
-        return bus_read_byte(loc->bus, loc->address);
+        return bus_read_byte(cpu->bus, loc->address);
     else
         return *(uint8_t*)loc->address;
 }
 
-static inline uint16_t loc_read_word(struct location* loc)
+static inline uint16_t loc_read_word(struct cpu8086* cpu, struct location* loc)
 {
     if (loc->virtual)
-        return bus_read_short(loc->bus, loc->address);
+    {
+        if (loc->address & 1)
+            cpu->cycles += 4;
+        return bus_read_short(cpu->bus, loc->address);
+    }
     else
         return *(uint16_t*)loc->address;
 }
 
-static inline void loc_write_byte(struct location* loc, uint8_t data)
+static inline void loc_write_byte(struct cpu8086* cpu, struct location* loc, uint8_t data)
 {
     if (loc->virtual)
-        bus_write_byte(loc->bus, loc->address, data);
+        bus_write_byte(cpu->bus, loc->address, data);
     else
         *(uint8_t*)loc->address = data;
 }
 
-static inline void loc_write_word(struct location* loc, uint16_t data)
+static inline void loc_write_word(struct cpu8086* cpu, struct location* loc, uint16_t data)
 {
     if (loc->virtual)
-        bus_write_short(loc->bus, loc->address, data);
+    {
+        if (loc->address & 1)
+            cpu->cycles += 4;
+        bus_write_short(cpu->bus, loc->address, data);
+    }
     else
         *(uint16_t*)loc->address = data;
 }
@@ -212,8 +220,6 @@ struct cpu8086* cpu8086_new(struct bus* bus)
     assert(bus);
     struct cpu8086* cpu = quick_malloc(sizeof(struct cpu8086));
     cpu->bus = bus;
-    cpu->destination.bus = bus;
-    cpu->source.bus = bus;
     cpu8086_reset(cpu);
     return cpu;
 }
