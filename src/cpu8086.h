@@ -25,6 +25,16 @@
 
 #define REGISTER_COUNT  0b1100
 
+#define FLAG_CARRY      (1 << 0)
+#define FLAG_PARITY     (1 << 2)
+#define FLAG_AUXILIARY  (1 << 4)
+#define FLAG_ZERO       (1 << 6)
+#define FLAG_SIGN       (1 << 7)
+#define FLAG_TRAP       (1 << 8)
+#define FLAG_INTENABLE  (1 << 9)
+#define FLAG_DIRECTION  (1 << 10)
+#define FLAG_OVERFLOW   (1 << 1)
+
 #define MOD_FIELD       2
 #define REG_FIELD       3
 #define RM_FIELD        3

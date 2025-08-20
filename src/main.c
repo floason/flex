@@ -18,10 +18,19 @@ int main()
                          0x30, 0x39, 0x2F, 0x38, 0x36, 0xCC, 0xFB, 0x12 };
                          */
     
-    // ADD [BP + SI - 1], CX
-    uint8_t buffer[] = { 0x00, 0x48, 0xFF };
+    // ADD [BX + SI - 1], CX
+    /*
+    uint8_t buffer[] = { 0x01, 0x48, 0xFF, 0xFF };
+    memcpy(&pc->memory[0xFFFF0], &buffer, sizeof(buffer));
+    */
+
+    // ADD AX, 1003H
+    uint8_t buffer[] = { 0x05, 0x03, 0x10 };
     memcpy(&pc->memory[0xFFFF0], &buffer, sizeof(buffer));
 
+    pc->cpu->ax = 0xFFFF;
+    pc->cpu->cx = 300;
+    pc->cpu->bx = 1;
     for (;;)
     {
         bus_clock(pc);

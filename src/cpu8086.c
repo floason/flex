@@ -10,6 +10,30 @@
 #include "cpu8086.h"
 #include "util.h"
 
+static const unsigned mask_buffer[2]    = { 0xFF, 0xFFFF };
+static const unsigned sign_bit[2]       = { 7, 15 };
+
+// https://graphics.stanford.edu/~seander/bithacks.html#ParityLookupTable
+static const bool parity_table[256] = 
+{
+#   define P2(n) n, n^1, n^1, n
+#   define P4(n) P2(n), P2(n^1), P2(n^1), P2(n)
+#   define P6(n) P4(n), P4(n^1), P4(n^1), P4(n)
+    P6(0), P6(1), P6(1), P6(0)
+};
+
+static inline bool calculate_parity(unsigned value, bool is_word)
+{
+    if (is_word)
+        return parity_table[value & 0xFF] ^ parity_table[(value >> 8) & 0xFF];
+    else
+        return parity_table[value & 0xFF];
+}
+
+struct opcode;
+
+static void op_add(struct opcode* op, struct cpu8086* cpu);
+
 // This is different from enum location_type.
 // Whereas location_type is resolved when the instruction being read
 // has been decoded, enum opcode_location is used to dictate how to
@@ -54,7 +78,6 @@ enum opcode_location
 struct opcode
 {
     const char* name;
-    uint8_t min_cycles;
     enum opcode_location destination;
     enum opcode_location source;
     bool is_word;
@@ -64,7 +87,12 @@ struct opcode
 static struct opcode op_table[] = 
 {
     // 0x00 to 0x0F
-    { "ADD", 0, LOC_RM, LOC_REG, false, NULL }
+    { "ADD",    LOC_RM,     LOC_REG,    false,  op_add },
+    { "ADD",    LOC_RM,     LOC_REG,    true,   op_add },
+    { "ADD",    LOC_REG,    LOC_RM,     false,  op_add },
+    { "ADD",    LOC_REG,    LOC_RM,     true,   op_add },
+    { "ADD",    LOC_AL,     LOC_IMM,    false,  op_add },
+    { "ADD",    LOC_AX,     LOC_IMM,    true,   op_add }
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -107,6 +135,22 @@ static inline void loc_write_word(struct cpu8086* cpu, struct location* loc, uin
         *(uint16_t*)loc->address = data;
 }
 
+static inline uint16_t loc_read(struct cpu8086* cpu, struct location* loc)
+{
+    if (op_table[cpu->opcode_byte].is_word)
+        return loc_read_word(cpu, loc);
+    else
+        return loc_read_byte(cpu, loc);
+}
+
+static inline void loc_write(struct cpu8086* cpu, struct location* loc, uint16_t data)
+{
+    if (op_table[cpu->opcode_byte].is_word)
+        loc_write_word(cpu, loc, data);
+    else
+        loc_write_byte(cpu, loc, data);
+}
+
 static inline uint16_t* cpu8086_reg_word(struct cpu8086* cpu, unsigned reg)
 {
     // This works because the registers are organised in the cpu8086 struct
@@ -120,7 +164,7 @@ static inline uint8_t* cpu8086_reg_byte(struct cpu8086* cpu, unsigned reg)
     // This works because the registers are organised in the cpu8086 struct
     // in the same order as the reg section of the ModR/M byte.
     assert(reg < (1 << REG_FIELD));
-    return (uint8_t*)(&cpu->ax) + (reg & 0b11) * 2 + reg / 4;
+    return (uint8_t*)(&cpu->ax) + (reg & 0b11) * 2 + (reg & 0b100);
 }
 
 static inline uint8_t cpu8086_prefetch_dequeue(struct cpu8086* cpu)
@@ -169,7 +213,7 @@ static inline void loc_set(struct cpu8086* cpu,
         case LOC_BH:
         {
             loc->type = DECODED_REGISTER;
-            loc->address = (uintptr_t)cpu8086_reg_byte(cpu, (unsigned)type);
+            loc->address = (uintptr_t)cpu8086_reg_byte(cpu, (unsigned)type - (unsigned)LOC_AL);
             loc->virtual = false;
             break;
         }
@@ -202,6 +246,19 @@ static inline void loc_set(struct cpu8086* cpu,
     }
 }
 
+static inline bool cpu8086_getflag(struct cpu8086* cpu, unsigned flag)
+{
+    return !!(cpu->flags & flag);
+}
+
+static inline void cpu8086_setflag(struct cpu8086* cpu, unsigned flag, bool toggle)
+{
+    if (toggle)
+        cpu->flags |= flag;
+    else
+        cpu->flags &= ~flag;
+}
+
 static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
 {
     cpu->prefix_g1 = PREFIX_G1_NONE;
@@ -215,6 +272,53 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->modrm_byte.value = MODRM_NONE;
 }
 
+static void op_add(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    unsigned result = dest + src;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
+    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
+    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
+    
+    // This looks ridiculous, but switch tables are faster than constantly doing
+    // if-else if-else if-else if, etc.
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+    }
+}
+
 struct cpu8086* cpu8086_new(struct bus* bus)
 {
     assert(bus);
@@ -226,7 +330,7 @@ struct cpu8086* cpu8086_new(struct bus* bus)
 
 void cpu8086_reset(struct cpu8086* cpu)
 {
-    cpu->flags = 0;
+    cpu->flags = 0x0000;
     cpu->ip = 0x0000;
     cpu->cs = 0xFFFF;
     cpu->ds = 0x0000;
@@ -266,7 +370,10 @@ void cpu8086_clock(struct cpu8086* cpu)
 
     // Skip if there are remaining cycles of execution.
     if (cpu->cycles > 0)
+    {
+        cpu->cycles--;
         return;
+    }
 
     // Skip if the prefetch queue is empty. (This is sort of like FC, I supppose.)
     if (cpu->mt)
@@ -485,6 +592,11 @@ next_stage: // oh dear
             assert(op.func);
             op.func(&op, cpu);
             cpu8086_reset_execution_regs(cpu);
+            cpu->cycles -= 1;   // For simplicity's sake, I decided to just copy the
+                                // cycles count of each instruction for all sets of
+                                // possible operands to each instruction. However,
+                                // this clock cycle would also be included, so 1 must
+                                // be subtracted.
             return;
         }
     }
