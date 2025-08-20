@@ -33,6 +33,9 @@ static inline bool calculate_parity(unsigned value, bool is_word)
 struct opcode;
 
 static void op_add(struct opcode* op, struct cpu8086* cpu);
+static void op_or(struct opcode* op, struct cpu8086* cpu);
+static void op_pop(struct opcode* op, struct cpu8086* cpu);
+static void op_push(struct opcode* op, struct cpu8086* cpu);
 
 // This is different from enum location_type.
 // Whereas location_type is resolved when the instruction being read
@@ -92,7 +95,19 @@ static struct opcode op_table[] =
     { "ADD",    LOC_REG,    LOC_RM,     false,  op_add },
     { "ADD",    LOC_REG,    LOC_RM,     true,   op_add },
     { "ADD",    LOC_AL,     LOC_IMM,    false,  op_add },
-    { "ADD",    LOC_AX,     LOC_IMM,    true,   op_add }
+    { "ADD",    LOC_AX,     LOC_IMM,    true,   op_add },
+    { "PUSH",   LOC_ES,     LOC_NULL,   true,   op_push },
+    { "POP",    LOC_ES,     LOC_NULL,   true,   op_pop },
+    { "OR",     LOC_RM,     LOC_REG,    false,  op_or },
+    { "OR",     LOC_RM,     LOC_REG,    true,   op_or },
+    { "OR",     LOC_REG,    LOC_RM,     false,  op_or },
+    { "OR",     LOC_REG,    LOC_RM,     true,   op_or },
+    { "OR",     LOC_AL,     LOC_IMM,    false,  op_or },
+    { "OR",     LOC_AX,     LOC_IMM,    true,   op_or },
+    { "PUSH",   LOC_CS,     LOC_NULL,   true,   op_push },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   false,  NULL },     // This may be a future consideration.
+    
+    // 0x10 to 0x1F
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -193,12 +208,18 @@ static inline void loc_set(struct cpu8086* cpu,
         case LOC_BP:
         case LOC_SI:
         case LOC_DI:
+        {
+            loc->type = DECODED_REGISTER;
+            loc->address = (uintptr_t)cpu8086_reg_word(cpu, (unsigned)type);
+            loc->virtual = false;
+            break;
+        }
         case LOC_ES:
         case LOC_CS:
         case LOC_SS:
         case LOC_DS:
         {
-            loc->type = DECODED_REGISTER;
+            loc->type = DECODED_SEGREG;
             loc->address = (uintptr_t)cpu8086_reg_word(cpu, (unsigned)type);
             loc->virtual = false;
             break;
@@ -226,9 +247,11 @@ static inline void loc_set(struct cpu8086* cpu,
         }
         case LOC_RM:
         {
-            loc->type = (cpu->modrm_byte.fields.mod == MOD_REG)
-                      ? DECODED_REGISTER
-                      : DECODED_MEMORY;
+            loc->type = (cpu->modrm_byte.fields.mod != MOD_REG)
+                      ? DECODED_MEMORY
+                      : cpu->modrm_is_segreg
+                      ? DECODED_SEGREG
+                      : DECODED_REGISTER;
             loc->address = cpu->rm;
             loc->virtual = cpu->modrm_byte.fields.mod != MOD_REG;
             break;
@@ -316,6 +339,106 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
             cpu->cycles += 17;
             break;
         }
+        default:
+            assert(false);
+    }
+}
+
+static void op_or(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    uint16_t result = dest | src;
+    loc_write(cpu, &cpu->destination, result);
+
+    cpu8086_setflag(cpu, FLAG_CARRY, false);
+    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, result);
+    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
+    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
+
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+static void op_pop(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t result = bus_read_short(cpu->bus, (cpu->ss << 4) + cpu->sp);
+    loc_write(cpu, &cpu->destination, result);
+    cpu->sp += 2;
+
+    switch (cpu->destination.type)
+    {
+        case DECODED_REGISTER:
+        case DECODED_SEGREG:
+        {
+            cpu->cycles += 8;
+            break;
+        }
+        case DECODED_MEMORY:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+static void op_push(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    cpu->sp -= 2;
+    bus_write_short(cpu->bus, (cpu->ss << 4) + cpu->sp, dest);
+
+    switch (cpu->destination.type)
+    {
+        case DECODED_REGISTER:
+        {
+            cpu->cycles += 11;
+            break;
+        }
+        case DECODED_SEGREG:
+        {
+            cpu->cycles += 10;
+            break;
+        }
+        case DECODED_MEMORY:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        default:
+            assert(false);
     }
 }
 
@@ -453,9 +576,9 @@ next_stage: // oh dear
                 cpu->disp16_byte = cpu8086_prefetch_dequeue(cpu);
             }
 
-            bool segreg = op.destination == LOC_SREG || op.source == LOC_SREG;
+            cpu->modrm_is_segreg = op.destination == LOC_SREG || op.source == LOC_SREG;
             cpu->reg = op.is_word
-                ? (uintptr_t)cpu8086_reg_word(cpu, cpu->modrm_byte.fields.reg + 8 * segreg)
+                ? (uintptr_t)cpu8086_reg_word(cpu, cpu->modrm_byte.fields.reg + 8 * cpu->modrm_is_segreg)
                 : (uintptr_t)cpu8086_reg_byte(cpu, cpu->modrm_byte.fields.reg);
             
             if (cpu->modrm_byte.fields.mod == MOD_REG)

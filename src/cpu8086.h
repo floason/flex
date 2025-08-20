@@ -75,7 +75,8 @@ enum location_type
 {
     DECODED_REGISTER,
     DECODED_MEMORY,
-    DECODED_IMMEDIATE
+    DECODED_IMMEDIATE,
+    DECODED_SEGREG
 };
 
 struct location
@@ -145,6 +146,7 @@ struct cpu8086
     } modrm_byte;                   // ModRM byte.
     struct location destination;    // Destination of the opcode.
     struct location source;         // Source of the opcode.
+    bool modrm_is_segreg;           // Does the ModRM byte use segreg?
 };
 
 struct cpu8086* cpu8086_new(struct bus* bus);
