@@ -5,6 +5,10 @@
 // this is the first time I'm writing an 808x emulator and I don't
 // really have strong EE knowledge.
 
+// Future references:
+// . MUL/DIV/IDIV will use transpiled Intel microcode (if I can understand it),
+//   because the timings for those fluctuate. 8086s aren't fast anyway.
+
 #include <assert.h>
 
 #include "cpu8086.h"
@@ -32,10 +36,12 @@ static inline bool calculate_parity(unsigned value, bool is_word)
 
 struct opcode;
 
+static void op_adc(struct opcode* op, struct cpu8086* cpu);
 static void op_add(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
+static void op_sbb(struct opcode* op, struct cpu8086* cpu);
 
 // This is different from enum location_type.
 // Whereas location_type is resolved when the instruction being read
@@ -105,9 +111,26 @@ static struct opcode op_table[] =
     { "OR",     LOC_AL,     LOC_IMM,    false,  op_or },
     { "OR",     LOC_AX,     LOC_IMM,    true,   op_or },
     { "PUSH",   LOC_CS,     LOC_NULL,   true,   op_push },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   false,  NULL },     // This may be a future consideration.
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },     // This may be a future consideration.
+                                                            // (Should be pop cs?)
     
     // 0x10 to 0x1F
+    { "ADC",    LOC_RM,     LOC_REG,    false,  op_adc },
+    { "ADC",    LOC_RM,     LOC_REG,    true,   op_adc },
+    { "ADC",    LOC_REG,    LOC_RM,     false,  op_adc },
+    { "ADC",    LOC_REG,    LOC_RM,     true,   op_adc },
+    { "ADC",    LOC_AL,     LOC_IMM,    false,  op_adc },
+    { "ADC",    LOC_AX,     LOC_IMM,    true,   op_adc },
+    { "PUSH",   LOC_SS,     LOC_NULL,   true,   op_push },
+    { "POP",    LOC_SS,     LOC_NULL,   true,   op_pop },
+    { "SBB",    LOC_RM,     LOC_REG,    false,  op_sbb },
+    { "SBB",    LOC_RM,     LOC_REG,    true,   op_sbb },
+    { "SBB",    LOC_REG,    LOC_RM,     false,  op_sbb },
+    { "SBB",    LOC_REG,    LOC_RM,     true,   op_sbb },
+    { "SBB",    LOC_AL,     LOC_IMM,    false,  op_sbb },
+    { "SBB",    LOC_AX,     LOC_IMM,    true,   op_sbb },
+    { "PUSH",   LOC_DS,     LOC_NULL,   true,   op_push },
+    { "POP",    LOC_DS,     LOC_NULL,   true,   op_pop },
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -295,6 +318,55 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->modrm_byte.value = MODRM_NONE;
 }
 
+static void op_adc(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source) + cpu8086_getflag(cpu, FLAG_CARRY);
+    unsigned result = dest + src;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
+    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
+    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
+    
+    // This looks ridiculous, but switch tables are faster than constantly doing
+    // if-else if-else if-else if, etc.
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
 static void op_add(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
@@ -310,8 +382,6 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    // This looks ridiculous, but switch tables are faster than constantly doing
-    // if-else if-else if-else if, etc.
     switch ((cpu->destination.type << 2) | cpu->source.type)
     {
         case (DECODED_REGISTER << 2) | DECODED_REGISTER:
@@ -435,6 +505,56 @@ static void op_push(struct opcode* op, struct cpu8086* cpu)
         case DECODED_MEMORY:
         {
             cpu->cycles += 16;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+static void op_sbb(struct opcode* op, struct cpu8086* cpu)
+{
+    // It's easier to just use two's complement here.
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = ~(loc_read(cpu, &cpu->source) + cpu8086_getflag(cpu, FLAG_CARRY)) + 1;
+    unsigned result = dest + src;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
+    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
+    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
+    
+    // This looks ridiculous, but switch tables are faster than constantly doing
+    // if-else if-else if-else if, etc.
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
             break;
         }
         default:
