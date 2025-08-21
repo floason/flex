@@ -47,6 +47,8 @@ static void op_and(struct opcode* op, struct cpu8086* cpu);
 static void op_cmp(struct opcode* op, struct cpu8086* cpu);
 static void op_daa(struct opcode* op, struct cpu8086* cpu);
 static void op_das(struct opcode* op, struct cpu8086* cpu);
+static void op_dec(struct opcode* op, struct cpu8086* cpu);
+static void op_inc(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
@@ -177,7 +179,63 @@ static struct opcode op_table[] =
     { "CMP",    LOC_AL,     LOC_IMM,    false,  op_cmp },
     { "CMP",    LOC_AX,     LOC_IMM,    true,   op_cmp },
     { "DS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX DS:
-    { "AAS",    LOC_NULL,   LOC_NULL,   false,  op_aas }
+    { "AAS",    LOC_NULL,   LOC_NULL,   false,  op_aas },
+
+    // 0x40 to 0x4F
+    { "INC",    LOC_AX,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_CX,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_DX,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_BX,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_SP,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_BP,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_SI,     LOC_NULL,   true,   op_inc },
+    { "INC",    LOC_DI,     LOC_NULL,   true,   op_inc },
+    { "DEC",    LOC_AX,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_CX,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_DX,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_BX,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_SP,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_BP,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_SI,     LOC_NULL,   true,   op_dec },
+    { "DEC",    LOC_DI,     LOC_NULL,   true,   op_dec },
+
+    // 0x50 to 0x5F
+    { "PUSH",   LOC_AX,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_CX,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_DX,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_BX,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_SP,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_BP,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_SI,     LOC_NULL,   true,   op_push },
+    { "PUSH",   LOC_DI,     LOC_NULL,   true,   op_push },
+    { "POP",    LOC_AX,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_CX,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_DX,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_BX,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_SP,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_BP,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_SI,     LOC_NULL,   true,   op_pop },
+    { "POP",    LOC_DI,     LOC_NULL,   true,   op_pop },
+
+    // 0x60 to 0x6F
+    // I believe this just mirrors 0x70 - 0x7F, but I'm not focusing
+    // on illegal instructions for now.
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -434,7 +492,7 @@ static void op_adc(struct opcode* op, struct cpu8086* cpu)
     loc_write(cpu, &cpu->destination, result);
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) + (src & 0xF) > 0xF);
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -482,7 +540,7 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
     
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) + (src & 0xF) > 0xF);
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -677,6 +735,64 @@ static void op_das(struct opcode* op, struct cpu8086* cpu)
     cpu->cycles += 4;
 }
 
+// DEC: decrement by 1
+static void op_dec(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    unsigned result = dest - 1;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) < 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ 0xFFFF) & (1 << sign_bit[op->is_word]));
+
+    switch (cpu->destination.type)
+    {
+        case DECODED_REGISTER:
+        {
+            cpu->cycles += (op->is_word ? 2 : 3);
+            break;
+        }
+        case DECODED_MEMORY:
+        {
+            cpu->cycles += 15;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// INC: increment by 1
+static void op_inc(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    unsigned result = dest + 1;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) + 1 > 0xF);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ 1) & (1 << sign_bit[op->is_word]));
+
+    switch (cpu->destination.type)
+    {
+        case DECODED_REGISTER:
+        {
+            cpu->cycles += (op->is_word ? 2 : 3);
+            break;
+        }
+        case DECODED_MEMORY:
+        {
+            cpu->cycles += 15;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
 // OR: bitwise or two operands
 static void op_or(struct opcode* op, struct cpu8086* cpu)
 {
@@ -786,7 +902,7 @@ static void op_sbb(struct opcode* op, struct cpu8086* cpu)
     
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) < ((~src + 1) & 0xF));
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -832,7 +948,7 @@ static void op_sub(struct opcode* op, struct cpu8086* cpu)
     
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) < ((~src + 1) & 0xF));
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
