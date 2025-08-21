@@ -33,7 +33,7 @@
 #define FLAG_TRAP       (1 << 8)
 #define FLAG_INTENABLE  (1 << 9)
 #define FLAG_DIRECTION  (1 << 10)
-#define FLAG_OVERFLOW   (1 << 1)
+#define FLAG_OVERFLOW   (1 << 11)
 
 #define MOD_FIELD       2
 #define REG_FIELD       3
@@ -90,11 +90,49 @@ struct cpu8086
 {
     struct bus* bus;
 
-    // General purpose registers.
-    uint16_t ax;                    // Accumulator.
-    uint16_t cx;                    // Count register.
-    uint16_t dx;                    // Data register.
-    uint16_t bx;                    // Base register.
+    // General purpose register - accumulator.
+    union
+    {
+        struct
+        {
+            uint8_t al;
+            uint8_t ah;
+        };
+        uint16_t ax;
+    };
+
+    // General purpose register - count register.
+    union
+    {
+        struct
+        {
+            uint8_t cl;
+            uint8_t ch;
+        };
+        uint16_t cx;
+    };
+
+    // General purpose register - data register.
+    union
+    {
+        struct
+        {
+            uint8_t dl;
+            uint8_t dh;
+        };
+        uint16_t dx;
+    };
+
+    // General purpose register - base register.
+    union
+    {
+        struct
+        {
+            uint8_t bl;
+            uint8_t bh;
+        };
+        uint16_t bx;
+    };
     
     // Offset registers.
     uint16_t sp;                    // Stack pointer.

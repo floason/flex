@@ -5,6 +5,9 @@
 // this is the first time I'm writing an 808x emulator and I don't
 // really have strong EE knowledge.
 
+// Flags: anything marked with "U" is undefined, however I'm currently unfamiliar
+// with how undefined behaviour operates on flags.
+
 // Future references:
 // . MUL/DIV/IDIV will use transpiled Intel microcode (if I can understand it),
 //   because the timings for those fluctuate. 8086s aren't fast anyway.
@@ -38,10 +41,14 @@ struct opcode;
 
 static void op_adc(struct opcode* op, struct cpu8086* cpu);
 static void op_add(struct opcode* op, struct cpu8086* cpu);
+static void op_and(struct opcode* op, struct cpu8086* cpu);
+static void op_daa(struct opcode* op, struct cpu8086* cpu);
+static void op_das(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
 static void op_sbb(struct opcode* op, struct cpu8086* cpu);
+static void op_sub(struct opcode* op, struct cpu8086* cpu);
 
 // This is different from enum location_type.
 // Whereas location_type is resolved when the instruction being read
@@ -131,6 +138,26 @@ static struct opcode op_table[] =
     { "SBB",    LOC_AX,     LOC_IMM,    true,   op_sbb },
     { "PUSH",   LOC_DS,     LOC_NULL,   true,   op_push },
     { "POP",    LOC_DS,     LOC_NULL,   true,   op_pop },
+
+    // 0x20 to 0x2F
+    { "AND",    LOC_RM,     LOC_REG,    false,  op_and },
+    { "AND",    LOC_RM,     LOC_REG,    true,   op_and },
+    { "AND",    LOC_REG,    LOC_RM,     false,  op_and },
+    { "AND",    LOC_REG,    LOC_RM,     true,   op_and },
+    { "AND",    LOC_AL,     LOC_IMM,    false,  op_and },
+    { "AND",    LOC_AX,     LOC_IMM,    true,   op_and },
+    { "ES:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX ES:
+    { "DAA",    LOC_NULL,   LOC_NULL,   false,  op_daa },
+    { "SUB",    LOC_RM,     LOC_REG,    false,  op_sub },
+    { "SUB",    LOC_RM,     LOC_REG,    true,   op_sub },
+    { "SUB",    LOC_REG,    LOC_RM,     false,  op_sub },
+    { "SUB",    LOC_REG,    LOC_RM,     true,   op_sub },
+    { "SUB",    LOC_AL,     LOC_IMM,    false,  op_sub },
+    { "SUB",    LOC_AX,     LOC_IMM,    true,   op_sub },
+    { "CS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX CS:
+    { "DAS",    LOC_NULL,   LOC_NULL,   false,  op_das },
+
+    // 0x30 to 0x3F
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -305,6 +332,13 @@ static inline void cpu8086_setflag(struct cpu8086* cpu, unsigned flag, bool togg
         cpu->flags &= ~flag;
 }
 
+static inline void cpu8086_setpzs_flags(struct cpu8086* cpu, uint16_t result, bool is_word)
+{
+    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, is_word));
+    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[is_word]) == 0);
+    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[is_word]) & 1);
+}
+
 static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
 {
     cpu->prefix_g1 = PREFIX_G1_NONE;
@@ -318,18 +352,17 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->modrm_byte.value = MODRM_NONE;
 }
 
+// ADC: add two operands + the carry flag
 static void op_adc(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
     uint16_t src = loc_read(cpu, &cpu->source) + cpu8086_getflag(cpu, FLAG_CARRY);
     unsigned result = dest + src;
+
     loc_write(cpu, &cpu->destination, result);
-    
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
     cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
-    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
-    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -367,6 +400,7 @@ static void op_adc(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// ADD: add two operands
 static void op_add(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
@@ -374,11 +408,9 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
     unsigned result = dest + src;
     loc_write(cpu, &cpu->destination, result);
     
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
     cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
-    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
-    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -414,18 +446,17 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
-static void op_or(struct opcode* op, struct cpu8086* cpu)
+// AND: bitwise and two operands
+static void op_and(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
     uint16_t src = loc_read(cpu, &cpu->source);
-    uint16_t result = dest | src;
+    uint16_t result = dest & src;
     loc_write(cpu, &cpu->destination, result);
 
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, false);
-    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, result);
-    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
-    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, result); // U; I'm not sure what constitutes as "undefined".
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
     switch ((cpu->destination.type << 2) | cpu->source.type)
@@ -460,6 +491,120 @@ static void op_or(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// DAA: "decimal adjust for addition"
+// https://www.righto.com/2023/01/understanding-x86s-decimal-adjust-after.html
+static void op_daa(struct opcode* op, struct cpu8086* cpu)
+{
+    uint8_t old_al = cpu->al;
+    uint8_t added = 0;
+    bool old_af = cpu8086_getflag(cpu, FLAG_AUXILIARY);
+
+    if ((cpu->al & 0xF) > 9 || old_af)
+    {
+        added += 6;
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, true);
+    }
+    else
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, false);
+
+    // According to GloriousCow, if AF (auxiliary) is set on the 8088, the value 
+    // used to compare the initial value of AL against is actually 0x9F, not 0x99.
+    // https://www.righto.com/2023/01/understanding-x86s-decimal-adjust-after.html?showComment=1677257126254#c6550878741725342730
+    if (old_al > 0x99 + (old_af ? 6 : 0) || cpu8086_getflag(cpu, FLAG_CARRY))
+    {
+        added += 0x60;
+        cpu8086_setflag(cpu, FLAG_CARRY, true);
+    }
+    else
+        cpu8086_setflag(cpu, FLAG_CARRY, false);
+
+    cpu->al += added;
+
+    cpu8086_setpzs_flags(cpu, cpu->al, false);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80);
+
+    cpu->cycles += 4;
+}
+
+// DAS: "decimal adjust for subtraction"
+// https://www.felixcloutier.com/x86/das
+static void op_das(struct opcode* op, struct cpu8086* cpu)
+{
+    uint8_t old_al = cpu->al;
+    uint8_t added = 0;
+    bool old_af = cpu8086_getflag(cpu, FLAG_AUXILIARY);
+    
+    if ((cpu->al & 0xF) > 9 || old_af)
+    {
+        added += 6;
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, true);
+    }
+    else
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, false);
+
+    if (cpu->al > 0x99 + (old_af ? 6 : 0) || cpu8086_getflag(cpu, FLAG_CARRY))
+    {
+        added += 0x60;
+        cpu8086_setflag(cpu, FLAG_CARRY, true);
+    }
+    else
+        cpu8086_setflag(cpu, FLAG_CARRY, false);
+
+    added = ~added + 1; // This is subtraction, so we exploit two's complement.
+    cpu->al += added;
+
+    cpu8086_setpzs_flags(cpu, cpu->al, false);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80);
+
+    cpu->cycles += 4;
+}
+
+// OR: bitwise or two operands
+static void op_or(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    uint16_t result = dest | src;
+    loc_write(cpu, &cpu->destination, result);
+
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_CARRY, false);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, result); // U
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
+
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// POP: pop a word from the stack into a location
 static void op_pop(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t result = bus_read_short(cpu->bus, (cpu->ss << 4) + cpu->sp);
@@ -484,6 +629,7 @@ static void op_pop(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// PUSH: push a word from a location onto the stack
 static void op_push(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
@@ -512,6 +658,7 @@ static void op_push(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// SBB: subtract src from dest, also subtract the carry flag
 static void op_sbb(struct opcode* op, struct cpu8086* cpu)
 {
     // It's easier to just use two's complement here.
@@ -520,11 +667,58 @@ static void op_sbb(struct opcode* op, struct cpu8086* cpu)
     unsigned result = dest + src;
     loc_write(cpu, &cpu->destination, result);
     
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_PARITY, calculate_parity(result, op->is_word));
     cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
-    cpu8086_setflag(cpu, FLAG_ZERO, (result & mask_buffer[op->is_word]) == 0);
-    cpu8086_setflag(cpu, FLAG_SIGN, (result >> sign_bit[op->is_word]) & 1);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
+    
+    // This looks ridiculous, but switch tables are faster than constantly doing
+    // if-else if-else if-else if, etc.
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// SUB: subtract src from dest
+static void op_sub(struct opcode* op, struct cpu8086* cpu)
+{
+    // It's easier to just use two's complement here.
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = ~loc_read(cpu, &cpu->source) + 1;
+    unsigned result = dest + src;
+    loc_write(cpu, &cpu->destination, result);
+    
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -622,9 +816,9 @@ void cpu8086_clock(struct cpu8086* cpu)
     if (cpu->mt)
         return;
 
-    struct opcode op;
+    struct opcode* op;
     if (cpu->opcode_byte != OPCODE_NONE)
-        op = op_table[cpu->opcode_byte];
+        op = &op_table[cpu->opcode_byte];
 
 next_stage: // oh dear
     switch (cpu->stage)
@@ -660,10 +854,10 @@ next_stage: // oh dear
             }
 
             cpu->opcode_byte = byte;
-            op = op_table[cpu->opcode_byte];
-            if (op.destination == LOC_RM || op.source == LOC_RM)
+            op = &op_table[cpu->opcode_byte];
+            if (op->destination == LOC_RM || op->source == LOC_RM)
                 cpu->stage = CPU8086_FETCH_MODRM;
-            else if (op.source == LOC_IMM)
+            else if (op->source == LOC_IMM)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -696,13 +890,13 @@ next_stage: // oh dear
                 cpu->disp16_byte = cpu8086_prefetch_dequeue(cpu);
             }
 
-            cpu->modrm_is_segreg = op.destination == LOC_SREG || op.source == LOC_SREG;
-            cpu->reg = op.is_word
+            cpu->modrm_is_segreg = op->destination == LOC_SREG || op->source == LOC_SREG;
+            cpu->reg = op->is_word
                 ? (uintptr_t)cpu8086_reg_word(cpu, cpu->modrm_byte.fields.reg + 8 * cpu->modrm_is_segreg)
                 : (uintptr_t)cpu8086_reg_byte(cpu, cpu->modrm_byte.fields.reg);
             
             if (cpu->modrm_byte.fields.mod == MOD_REG)
-                cpu->rm = op.is_word
+                cpu->rm = op->is_word
                    ? (uintptr_t)cpu8086_reg_word(cpu, cpu->modrm_byte.fields.reg)
                    : (uintptr_t)cpu8086_reg_byte(cpu, cpu->modrm_byte.fields.rm);
             else
@@ -789,7 +983,7 @@ next_stage: // oh dear
                 cpu->rm = ((*cpu8086_reg_word(cpu, prefix) << 4) + cpu->rm) & 0xFFFFF;
             }
 
-            if (op.source == LOC_IMM)
+            if (op->source == LOC_IMM)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -806,14 +1000,14 @@ next_stage: // oh dear
                 cpu->imm8_byte = cpu8086_prefetch_dequeue(cpu);
             }
 
-            if (op.is_word)
+            if (op->is_word)
             {
                 if (cpu->mt)
                     return;
                 cpu->imm16_byte = cpu8086_prefetch_dequeue(cpu);
             }
 
-            cpu->immediate = op.is_word
+            cpu->immediate = op->is_word
                            ? (cpu->imm16_byte << 8) | cpu->imm8_byte
                            : cpu->imm8_byte;
             cpu->stage = CPU8086_ADDRESS_MODE;
@@ -823,8 +1017,8 @@ next_stage: // oh dear
         // Configure the destination and source addresses of the opcode.
         case CPU8086_ADDRESS_MODE:
         {
-            loc_set(cpu, &cpu->destination, op.destination);
-            loc_set(cpu, &cpu->source, op.source);
+            loc_set(cpu, &cpu->destination, op->destination);
+            loc_set(cpu, &cpu->source, op->source);
             cpu->stage = CPU8086_EXECUTING;
             goto next_stage;
         }
@@ -832,8 +1026,8 @@ next_stage: // oh dear
         // Execute the opcode.
         case CPU8086_EXECUTING:
         {
-            assert(op.func);
-            op.func(&op, cpu);
+            assert(op->func);
+            op->func(op, cpu);
             cpu8086_reset_execution_regs(cpu);
             cpu->cycles -= 1;   // For simplicity's sake, I decided to just copy the
                                 // cycles count of each instruction for all sets of
