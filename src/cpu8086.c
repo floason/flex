@@ -39,9 +39,12 @@ static inline bool calculate_parity(unsigned value, bool is_word)
 
 struct opcode;
 
+static void op_aaa(struct opcode* op, struct cpu8086* cpu);
+static void op_aas(struct opcode* op, struct cpu8086* cpu);
 static void op_adc(struct opcode* op, struct cpu8086* cpu);
 static void op_add(struct opcode* op, struct cpu8086* cpu);
 static void op_and(struct opcode* op, struct cpu8086* cpu);
+static void op_cmp(struct opcode* op, struct cpu8086* cpu);
 static void op_daa(struct opcode* op, struct cpu8086* cpu);
 static void op_das(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
@@ -49,6 +52,7 @@ static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
 static void op_sbb(struct opcode* op, struct cpu8086* cpu);
 static void op_sub(struct opcode* op, struct cpu8086* cpu);
+static void op_xor(struct opcode* op, struct cpu8086* cpu);
 
 // This is different from enum location_type.
 // Whereas location_type is resolved when the instruction being read
@@ -158,6 +162,22 @@ static struct opcode op_table[] =
     { "DAS",    LOC_NULL,   LOC_NULL,   false,  op_das },
 
     // 0x30 to 0x3F
+    { "XOR",    LOC_RM,     LOC_REG,    false,  op_xor },
+    { "XOR",    LOC_RM,     LOC_REG,    true,   op_xor },
+    { "XOR",    LOC_REG,    LOC_RM,     false,  op_xor },
+    { "XOR",    LOC_REG,    LOC_RM,     true,   op_xor },
+    { "XOR",    LOC_AL,     LOC_IMM,    false,  op_xor },
+    { "XOR",    LOC_AX,     LOC_IMM,    true,   op_xor },
+    { "SS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX SS:
+    { "AAA",    LOC_NULL,   LOC_NULL,   false,  op_aaa },
+    { "CMP",    LOC_RM,     LOC_REG,    false,  op_cmp },
+    { "CMP",    LOC_RM,     LOC_REG,    true,   op_cmp },
+    { "CMP",    LOC_REG,    LOC_RM,     false,  op_cmp },
+    { "CMP",    LOC_REG,    LOC_RM,     true,   op_cmp },
+    { "CMP",    LOC_AL,     LOC_IMM,    false,  op_cmp },
+    { "CMP",    LOC_AX,     LOC_IMM,    true,   op_cmp },
+    { "DS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX DS:
+    { "AAS",    LOC_NULL,   LOC_NULL,   false,  op_aas }
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -352,6 +372,58 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->modrm_byte.value = MODRM_NONE;
 }
 
+// AAA: ascii adjust for addition
+// https://c9x.me/x86/html/file_module_x86_id_1.html
+static void op_aaa(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t old_al = cpu->al;
+    uint16_t added = 0;
+    if ((cpu->al & 0xF) > 9 || cpu8086_getflag(cpu, FLAG_AUXILIARY))
+    {
+        cpu->ah += 1;
+        cpu->al += added = 6;
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, true);
+        cpu8086_setflag(cpu, FLAG_CARRY, true);
+    }
+    else
+    {
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, false);
+        cpu8086_setflag(cpu, FLAG_CARRY, false);
+    }
+    cpu->al &= 0xF;
+
+    cpu8086_setpzs_flags(cpu, cpu->al, false); // U
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80); // U
+
+    cpu->cycles += 4;
+}
+
+// AAA: ascii adjust for subtraction
+// https://c9x.me/x86/html/file_module_x86_id_1.html
+static void op_aas(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t old_al = cpu->al;
+    uint16_t added = 0;
+    if ((cpu->al & 0xF) > 9 || cpu8086_getflag(cpu, FLAG_AUXILIARY))
+    {
+        cpu->ah -= 1;
+        cpu->al += added = (~6 + 1);
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, true);
+        cpu8086_setflag(cpu, FLAG_CARRY, true);
+    }
+    else
+    {
+        cpu8086_setflag(cpu, FLAG_AUXILIARY, false);
+        cpu8086_setflag(cpu, FLAG_CARRY, false);
+    }
+    cpu->al &= 0xF;
+
+    cpu8086_setpzs_flags(cpu, cpu->al, false); // U
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80); // U
+
+    cpu->cycles += 4;
+}
+
 // ADC: add two operands + the carry flag
 static void op_adc(struct opcode* op, struct cpu8086* cpu)
 {
@@ -456,7 +528,7 @@ static void op_and(struct opcode* op, struct cpu8086* cpu)
 
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, false);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, result); // U; I'm not sure what constitutes as "undefined".
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
     switch ((cpu->destination.type << 2) | cpu->source.type)
@@ -484,6 +556,52 @@ static void op_and(struct opcode* op, struct cpu8086* cpu)
         case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// CMP: subtract src from dest without storing, but still set flags
+static void op_cmp(struct opcode* op, struct cpu8086* cpu)
+{
+    // It's easier to just use two's complement here.
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = ~loc_read(cpu, &cpu->source) + 1;
+    unsigned result = dest + src;
+    
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, 
+        (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
+    
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 10;
             break;
         }
         default:
@@ -521,13 +639,13 @@ static void op_daa(struct opcode* op, struct cpu8086* cpu)
     cpu->al += added;
 
     cpu8086_setpzs_flags(cpu, cpu->al, false);
-    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80); // U
 
     cpu->cycles += 4;
 }
 
 // DAS: "decimal adjust for subtraction"
-// https://www.felixcloutier.com/x86/das
+// https://c9x.me/x86/html/file_module_x86_id_70.html
 static void op_das(struct opcode* op, struct cpu8086* cpu)
 {
     uint8_t old_al = cpu->al;
@@ -554,7 +672,7 @@ static void op_das(struct opcode* op, struct cpu8086* cpu)
     cpu->al += added;
 
     cpu8086_setpzs_flags(cpu, cpu->al, false);
-    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80);
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, (cpu->al ^ old_al) & (cpu->al ^ added) & 0x80); // U
 
     cpu->cycles += 4;
 }
@@ -569,7 +687,7 @@ static void op_or(struct opcode* op, struct cpu8086* cpu)
 
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, false);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, result); // U
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
     switch ((cpu->destination.type << 2) | cpu->source.type)
@@ -661,7 +779,6 @@ static void op_push(struct opcode* op, struct cpu8086* cpu)
 // SBB: subtract src from dest, also subtract the carry flag
 static void op_sbb(struct opcode* op, struct cpu8086* cpu)
 {
-    // It's easier to just use two's complement here.
     uint16_t dest = loc_read(cpu, &cpu->destination);
     uint16_t src = ~(loc_read(cpu, &cpu->source) + cpu8086_getflag(cpu, FLAG_CARRY)) + 1;
     unsigned result = dest + src;
@@ -673,8 +790,6 @@ static void op_sbb(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    // This looks ridiculous, but switch tables are faster than constantly doing
-    // if-else if-else if-else if, etc.
     switch ((cpu->destination.type << 2) | cpu->source.type)
     {
         case (DECODED_REGISTER << 2) | DECODED_REGISTER:
@@ -710,7 +825,6 @@ static void op_sbb(struct opcode* op, struct cpu8086* cpu)
 // SUB: subtract src from dest
 static void op_sub(struct opcode* op, struct cpu8086* cpu)
 {
-    // It's easier to just use two's complement here.
     uint16_t dest = loc_read(cpu, &cpu->destination);
     uint16_t src = ~loc_read(cpu, &cpu->source) + 1;
     unsigned result = dest + src;
@@ -722,8 +836,51 @@ static void op_sub(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    // This looks ridiculous, but switch tables are faster than constantly doing
-    // if-else if-else if-else if, etc.
+    switch ((cpu->destination.type << 2) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        {
+            cpu->cycles += 16;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// OR: bitwise xor two operands
+static void op_xor(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    uint16_t result = dest ^ src;
+    loc_write(cpu, &cpu->destination, result);
+
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_CARRY, false);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
+
     switch ((cpu->destination.type << 2) | cpu->source.type)
     {
         case (DECODED_REGISTER << 2) | DECODED_REGISTER:
