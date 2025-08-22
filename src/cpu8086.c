@@ -21,12 +21,13 @@ static const unsigned mask_buffer[2]    = { 0xFF, 0xFFFF };
 static const unsigned sign_bit[2]       = { 7, 15 };
 
 // https://graphics.stanford.edu/~seander/bithacks.html#ParityLookupTable
+// (modified for 1 = even, 0 = odd)
 static const bool parity_table[256] = 
 {
 #   define P2(n) n, n^1, n^1, n
 #   define P4(n) P2(n), P2(n^1), P2(n^1), P2(n)
 #   define P6(n) P4(n), P4(n^1), P4(n^1), P4(n)
-    P6(0), P6(1), P6(1), P6(0)
+    P6(1), P6(0), P6(0), P6(1)
 };
 
 static inline bool calculate_parity(unsigned value, bool is_word)
@@ -49,6 +50,22 @@ static void op_daa(struct opcode* op, struct cpu8086* cpu);
 static void op_das(struct opcode* op, struct cpu8086* cpu);
 static void op_dec(struct opcode* op, struct cpu8086* cpu);
 static void op_inc(struct opcode* op, struct cpu8086* cpu);
+static void op_ja(struct opcode* op, struct cpu8086* cpu);
+static void op_jae(struct opcode* op, struct cpu8086* cpu);
+static void op_jb(struct opcode* op, struct cpu8086* cpu);
+static void op_jbe(struct opcode* op, struct cpu8086* cpu);
+static void op_je(struct opcode* op, struct cpu8086* cpu);
+static void op_jg(struct opcode* op, struct cpu8086* cpu);
+static void op_jge(struct opcode* op, struct cpu8086* cpu);
+static void op_jl(struct opcode* op, struct cpu8086* cpu);
+static void op_jle(struct opcode* op, struct cpu8086* cpu);
+static void op_jne(struct opcode* op, struct cpu8086* cpu);
+static void op_jno(struct opcode* op, struct cpu8086* cpu);
+static void op_jnp(struct opcode* op, struct cpu8086* cpu);
+static void op_jns(struct opcode* op, struct cpu8086* cpu);
+static void op_jo(struct opcode* op, struct cpu8086* cpu);
+static void op_jp(struct opcode* op, struct cpu8086* cpu);
+static void op_js(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
@@ -236,6 +253,26 @@ static struct opcode op_table[] =
     { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
     { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
     { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+
+    // 0x70 to 0x7F
+    { "JO",     LOC_NULL,   LOC_IMM,    false,  op_jo },
+    { "JNO",    LOC_NULL,   LOC_IMM,    false,  op_jno },
+    { "JB",     LOC_NULL,   LOC_IMM,    false,  op_jb },
+    { "JAE",    LOC_NULL,   LOC_IMM,    false,  op_jae },
+    { "JE",     LOC_NULL,   LOC_IMM,    false,  op_je },
+    { "JNE",    LOC_NULL,   LOC_IMM,    false,  op_jne },
+    { "JBE",    LOC_NULL,   LOC_IMM,    false,  op_jbe },
+    { "JA",     LOC_NULL,   LOC_IMM,    false,  op_ja },
+    { "JS",     LOC_NULL,   LOC_IMM,    false,  op_js },
+    { "JNS",    LOC_NULL,   LOC_IMM,    false,  op_jns },
+    { "JP",     LOC_NULL,   LOC_IMM,    false,  op_jp },
+    { "JNP",    LOC_NULL,   LOC_IMM,    false,  op_jnp },
+    { "JL",     LOC_NULL,   LOC_IMM,    false,  op_jl },
+    { "JGE",    LOC_NULL,   LOC_IMM,    false,  op_jge },
+    { "JLE",    LOC_NULL,   LOC_IMM,    false,  op_jle },
+    { "JG",     LOC_NULL,   LOC_IMM,    false,  op_jg },
+
+    // 0x80 to 0x8F
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -319,7 +356,17 @@ static inline uint8_t cpu8086_prefetch_dequeue(struct cpu8086* cpu)
         cpu->mt = cpu->q_r == cpu->q_w;
     }
     cpu->hl = !cpu->hl;
+    cpu->current_ip++;
     return read;
+}
+
+static inline void cpu8086_jump(struct cpu8086* cpu, uint16_t ip, uint16_t cs)
+{
+    cpu->hl = false;
+    cpu->mt = false;
+    cpu->q_r = cpu->q_w;
+    cpu->ip = cpu->current_ip = ip;
+    cpu->cs = cs;
 }
 
 static inline void loc_set(struct cpu8086* cpu, 
@@ -793,6 +840,216 @@ static void op_inc(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// JA: jump if above
+static void op_ja(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_CARRY) && !cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JAE: jump if above or equal
+static void op_jae(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_CARRY))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JB: jump if below
+static void op_jb(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_CARRY))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JBE: jump if below or equal to
+static void op_jbe(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_CARRY) || cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JE: jump if equal
+static void op_je(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JG: jump if greater
+static void op_jg(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_SIGN) == cpu8086_getflag(cpu, FLAG_OVERFLOW)
+        && !cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JGE: jump if greater or equal
+static void op_jge(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_SIGN) == cpu8086_getflag(cpu, FLAG_OVERFLOW))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JL: jump if less
+static void op_jl(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_SIGN) != cpu8086_getflag(cpu, FLAG_OVERFLOW))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JLE: jump if less or equal
+static void op_jle(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_SIGN) != cpu8086_getflag(cpu, FLAG_OVERFLOW)
+        || cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JNE: jump if not equal
+static void op_jne(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_ZERO))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JNO: jump if not overflow
+static void op_jno(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_OVERFLOW))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JNS: jump if not parity
+static void op_jnp(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_PARITY))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JNS: jump if not sign
+static void op_jns(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (!cpu8086_getflag(cpu, FLAG_SIGN))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JO: jump if overflow
+static void op_jo(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_OVERFLOW))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JP: jump if parity
+static void op_jp(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_PARITY))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
+// JS: jump if sign
+static void op_js(struct opcode* op, struct cpu8086* cpu)
+{
+    int8_t offset = loc_read(cpu, &cpu->source);
+    if (cpu8086_getflag(cpu, FLAG_SIGN))
+    {
+        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu->cycles += 12;
+    }
+
+    cpu->cycles += 4;
+}
+
 // OR: bitwise or two operands
 static void op_or(struct opcode* op, struct cpu8086* cpu)
 {
@@ -1052,6 +1309,7 @@ void cpu8086_reset(struct cpu8086* cpu)
 
     cpu->biu_prefetch_cycles = 3;
     cpu->cycles = 0;
+    cpu->current_ip = 0x0000;
     cpu8086_reset_execution_regs(cpu);
 }
 

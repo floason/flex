@@ -158,6 +158,7 @@ struct cpu8086
     uint8_t mt              : 1;    // Is the queue empty?
 
     // Emulation execution variables.
+    uint16_t current_ip;            // The current instruction pointer, irrespective of the prefetch queue.
     uint8_t cycles;                 // How many cycles must the CPU pause for?
     uint8_t biu_prefetch_cycles;    // How many cycles remaining until the prefetch finishes?
     uint8_t prefix_g1;              // Group 1 prefix (if any).
