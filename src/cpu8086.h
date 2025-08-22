@@ -73,6 +73,7 @@ enum cpu8086_stage
 
 enum location_type
 {
+    DECODED_ACCUMULATOR,
     DECODED_REGISTER,
     DECODED_MEMORY,
     DECODED_IMMEDIATE,

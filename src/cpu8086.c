@@ -45,10 +45,12 @@ static void op_aas(struct opcode* op, struct cpu8086* cpu);
 static void op_adc(struct opcode* op, struct cpu8086* cpu);
 static void op_add(struct opcode* op, struct cpu8086* cpu);
 static void op_and(struct opcode* op, struct cpu8086* cpu);
+static void op_cbw(struct opcode* op, struct cpu8086* cpu);
 static void op_cmp(struct opcode* op, struct cpu8086* cpu);
 static void op_daa(struct opcode* op, struct cpu8086* cpu);
 static void op_das(struct opcode* op, struct cpu8086* cpu);
 static void op_dec(struct opcode* op, struct cpu8086* cpu);
+static void op_imm(struct opcode* op, struct cpu8086* cpu);
 static void op_inc(struct opcode* op, struct cpu8086* cpu);
 static void op_ja(struct opcode* op, struct cpu8086* cpu);
 static void op_jae(struct opcode* op, struct cpu8086* cpu);
@@ -66,11 +68,15 @@ static void op_jns(struct opcode* op, struct cpu8086* cpu);
 static void op_jo(struct opcode* op, struct cpu8086* cpu);
 static void op_jp(struct opcode* op, struct cpu8086* cpu);
 static void op_js(struct opcode* op, struct cpu8086* cpu);
+static void op_lea(struct opcode* op, struct cpu8086* cpu);
+static void op_mov(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
 static void op_sbb(struct opcode* op, struct cpu8086* cpu);
 static void op_sub(struct opcode* op, struct cpu8086* cpu);
+static void op_test(struct opcode* op, struct cpu8086* cpu);
+static void op_xchg(struct opcode* op, struct cpu8086* cpu);
 static void op_xor(struct opcode* op, struct cpu8086* cpu);
 
 // This is different from enum location_type.
@@ -105,6 +111,7 @@ enum opcode_location
 
     // immed
     LOC_IMM,
+    LOC_IMM8,
 
     // ModRM
     LOC_RM,
@@ -123,6 +130,7 @@ struct opcode
     void (*func)(struct opcode* op, struct cpu8086* cpu);
 };
 
+// Root opcode table.
 static struct opcode op_table[] = 
 {
     // 0x00 to 0x0F
@@ -273,6 +281,42 @@ static struct opcode op_table[] =
     { "JG",     LOC_NULL,   LOC_IMM,    false,  op_jg },
 
     // 0x80 to 0x8F
+    { "IMM",    LOC_RM,     LOC_IMM,    false,  op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM,    true,   op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM,    false,  op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM8,   true,   op_imm },
+    { "TEST",   LOC_REG,    LOC_RM,     false,  op_test },
+    { "TEST",   LOC_REG,    LOC_RM,     true,   op_test },
+    { "XCHG",   LOC_REG,    LOC_RM,     false,  op_xchg },
+    { "XCHG",   LOC_REG,    LOC_RM,     true,   op_xchg },
+    { "MOV",    LOC_RM,     LOC_REG,    false,  op_mov },
+    { "MOV",    LOC_RM,     LOC_REG,    true,   op_mov },
+    { "MOV",    LOC_REG,    LOC_RM,     false,  op_mov },
+    { "MOV",    LOC_REG,    LOC_RM,     true,   op_mov },
+    { "MOV",    LOC_RM,     LOC_SREG,   true,   op_mov },
+    { "LEA",    LOC_REG,    LOC_RM,     true,   op_lea },
+    { "MOV",    LOC_SREG,   LOC_RM,     true,   op_mov },
+    { "POP",    LOC_RM,     LOC_NULL,   true,   op_pop },
+
+    // 0x90 to 0x9F
+};
+
+// IMM group opcode table.
+// Since the locations and word types are already decoded, they are
+// just placeholders. While this could just be a table of function
+// pointers, each opcode name is still specified for debugging
+// purposes. 
+static struct opcode imm_table[] =
+{
+    // 0x00 to 0x07
+    { "ADD",    LOC_NULL,   LOC_NULL,   false,  op_add },
+    { "OR",     LOC_NULL,   LOC_NULL,   false,  op_or },
+    { "ADC",    LOC_NULL,   LOC_NULL,   false,  op_adc },
+    { "SBB",    LOC_NULL,   LOC_NULL,   false,  op_sbb },
+    { "AND",    LOC_NULL,   LOC_NULL,   false,  op_and },
+    { "SUB",    LOC_NULL,   LOC_NULL,   false,  op_sub },
+    { "XOR",    LOC_NULL,   LOC_NULL,   false,  op_xor },
+    { "CMP",    LOC_NULL,   LOC_NULL,   false,  op_cmp },
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -384,7 +428,9 @@ static inline void loc_set(struct cpu8086* cpu,
         case LOC_SI:
         case LOC_DI:
         {
-            loc->type = DECODED_REGISTER;
+            loc->type = (type == LOC_AX)
+                      ? DECODED_ACCUMULATOR
+                      : DECODED_REGISTER;
             loc->address = (uintptr_t)cpu8086_reg_word(cpu, (unsigned)type);
             loc->virtual = false;
             break;
@@ -408,12 +454,15 @@ static inline void loc_set(struct cpu8086* cpu,
         case LOC_DH:
         case LOC_BH:
         {
-            loc->type = DECODED_REGISTER;
+            loc->type = (type == LOC_AL || type == LOC_AH) 
+                      ? DECODED_ACCUMULATOR
+                      : DECODED_REGISTER;
             loc->address = (uintptr_t)cpu8086_reg_byte(cpu, (unsigned)type - (unsigned)LOC_AL);
             loc->virtual = false;
             break;
         }
         case LOC_IMM:
+        case LOC_IMM8:
         {
             loc->type = DECODED_IMMEDIATE;
             loc->address = (uintptr_t)&cpu->immediate;
@@ -545,29 +594,30 @@ static void op_adc(struct opcode* op, struct cpu8086* cpu)
     
     // This looks ridiculous, but switch tables are faster than constantly doing
     // if-else if-else if-else if, etc.
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -591,29 +641,30 @@ static void op_add(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -636,29 +687,30 @@ static void op_and(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -666,6 +718,13 @@ static void op_and(struct opcode* op, struct cpu8086* cpu)
         default:
             assert(false);
     }
+}
+
+// CBW: convert byte to word by sign-extending AL to AX
+static void op_cbw(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu->ax = 0xFF00 * ((cpu->al >> 7) & 1) | cpu->al;
+    cpu->cycles += 2;
 }
 
 // CMP: subtract src from dest without storing, but still set flags
@@ -682,29 +741,30 @@ static void op_cmp(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 10;
             break;
@@ -796,6 +856,7 @@ static void op_dec(struct opcode* op, struct cpu8086* cpu)
 
     switch (cpu->destination.type)
     {
+        case DECODED_ACCUMULATOR:
         case DECODED_REGISTER:
         {
             cpu->cycles += (op->is_word ? 2 : 3);
@@ -809,6 +870,20 @@ static void op_dec(struct opcode* op, struct cpu8086* cpu)
         default:
             assert(false);
     }
+}
+
+// Group IMM:
+// - ADD
+// - OR
+// - ADC
+// - SBB
+// - AND
+// - SUB
+// - XOR
+// - CMP
+static void op_imm(struct opcode* op, struct cpu8086* cpu)
+{
+    imm_table[cpu->modrm_byte.fields.reg].func(op, cpu);
 }
 
 // INC: increment by 1
@@ -825,6 +900,7 @@ static void op_inc(struct opcode* op, struct cpu8086* cpu)
 
     switch (cpu->destination.type)
     {
+        case DECODED_ACCUMULATOR:
         case DECODED_REGISTER:
         {
             cpu->cycles += (op->is_word ? 2 : 3);
@@ -1050,6 +1126,60 @@ static void op_js(struct opcode* op, struct cpu8086* cpu)
     cpu->cycles += 4;
 }
 
+// LEA: load effective address into register destination
+static void op_lea(struct opcode* op, struct cpu8086* cpu)
+{
+    assert(cpu->source.virtual); // TODO: how does this actually work?
+    loc_write(cpu, &cpu->destination, cpu->source.address);
+}
+
+// MOV: copy from source to destination
+static void op_mov(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t src = loc_read(cpu, &cpu->source);
+    loc_write(cpu, &cpu->destination, src);
+
+    switch ((cpu->destination.type << 3) | cpu->source.type)
+    {
+        case (DECODED_MEMORY << 3) | DECODED_ACCUMULATOR:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_MEMORY:
+        {
+            cpu->cycles += 10;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_SEGREG << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 2) | DECODED_SEGREG:
+        {
+            cpu->cycles += 2;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_SEGREG << 2) | DECODED_MEMORY:
+        {
+            cpu->cycles += 8;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 2) | DECODED_SEGREG:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 10;
+            break;
+        }
+    }
+}
+
 // OR: bitwise or two operands
 static void op_or(struct opcode* op, struct cpu8086* cpu)
 {
@@ -1063,29 +1193,30 @@ static void op_or(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -1104,6 +1235,7 @@ static void op_pop(struct opcode* op, struct cpu8086* cpu)
 
     switch (cpu->destination.type)
     {
+        case DECODED_ACCUMULATOR:
         case DECODED_REGISTER:
         case DECODED_SEGREG:
         {
@@ -1129,6 +1261,7 @@ static void op_push(struct opcode* op, struct cpu8086* cpu)
 
     switch (cpu->destination.type)
     {
+        case DECODED_ACCUMULATOR:
         case DECODED_REGISTER:
         {
             cpu->cycles += 11;
@@ -1163,29 +1296,30 @@ static void op_sbb(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -1209,29 +1343,30 @@ static void op_sub(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -1241,7 +1376,81 @@ static void op_sub(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
-// OR: bitwise xor two operands
+// TEST: bitwise and two operands without setting destination
+static void op_test(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    uint16_t result = dest & src;
+
+    cpu8086_setpzs_flags(cpu, result, op->is_word);
+    cpu8086_setflag(cpu, FLAG_CARRY, false);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
+    cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
+
+    switch ((cpu->destination.type << 3) | cpu->source.type)
+    {
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
+        {
+            cpu->cycles += 9;
+            break;
+        }
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 5;
+            break;
+        }
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 11;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// XCHG: exchange between destination/source
+static void op_xchg(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t dest = loc_read(cpu, &cpu->destination);
+    uint16_t src = loc_read(cpu, &cpu->source);
+    loc_write(cpu, &cpu->destination, src);
+    loc_write(cpu, &cpu->source, dest);
+
+    switch ((cpu->destination.type << 3) | cpu->source.type)
+    {
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 3;
+            break;
+        }
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
+        {
+            cpu->cycles += 4;
+            break;
+        }
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
+        {
+            cpu->cycles += 17;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// XOR: bitwise xor two operands
 static void op_xor(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
@@ -1254,29 +1463,30 @@ static void op_xor(struct opcode* op, struct cpu8086* cpu)
     cpu8086_setflag(cpu, FLAG_AUXILIARY, false); // U
     cpu8086_setflag(cpu, FLAG_OVERFLOW, false);
 
-    switch ((cpu->destination.type << 2) | cpu->source.type)
+    switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 16;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 17;
             break;
@@ -1359,7 +1569,8 @@ next_stage: // oh dear
         {
             uint8_t byte = cpu8086_prefetch_dequeue(cpu);
 
-            // Prefix bytes take 2 cycles.
+            // Prefix bytes take 2 cycles as they are just 1BL instructions.
+            // (Should these therefore just have their own functions?)
             switch (byte)
             {
                 case PREFIX_G1_LOCK: 
@@ -1388,7 +1599,7 @@ next_stage: // oh dear
             op = &op_table[cpu->opcode_byte];
             if (op->destination == LOC_RM || op->source == LOC_RM)
                 cpu->stage = CPU8086_FETCH_MODRM;
-            else if (op->source == LOC_IMM)
+            else if (op->source == LOC_IMM || op->source == LOC_IMM8)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -1514,7 +1725,7 @@ next_stage: // oh dear
                 cpu->rm = ((*cpu8086_reg_word(cpu, prefix) << 4) + cpu->rm) & 0xFFFFF;
             }
 
-            if (op->source == LOC_IMM)
+            if (op->source == LOC_IMM || op->source == LOC_IMM8)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -1533,9 +1744,17 @@ next_stage: // oh dear
 
             if (op->is_word)
             {
-                if (cpu->mt)
-                    return;
-                cpu->imm16_byte = cpu8086_prefetch_dequeue(cpu);
+                // Opcode 0x83 works quite differently: despite it being a
+                // word instruction, the immediate value read is only 8-bit.
+                // In this case, it must be sign-extended.
+                if (op->source == LOC_IMM8)
+                    cpu->imm16_byte = 0xFF * ((cpu->imm8_byte >> 7) & 1);
+                else
+                {
+                    if (cpu->mt)
+                        return;
+                    cpu->imm16_byte = cpu8086_prefetch_dequeue(cpu);
+                }
             }
 
             cpu->immediate = op->is_word
