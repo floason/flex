@@ -25,8 +25,13 @@ int main()
     */
 
     // ADD AX, 1003H
-    uint8_t buffer[] = { 0x05, 0x03, 0x10 };
+    //uint8_t buffer[] = { 0x05, 0x03, 0x10 };
+    //memcpy(&pc->memory[0xFFFF0], &buffer, sizeof(buffer));
+
+    // WAIT
+    uint8_t buffer[] = { 0x9B };
     memcpy(&pc->memory[0xFFFF0], &buffer, sizeof(buffer));
+    pc->cpu->test = true;
 
     pc->cpu->ax = 0xFFFF;
     pc->cpu->cx = 300;

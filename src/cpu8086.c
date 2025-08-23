@@ -45,8 +45,10 @@ static void op_aas(struct opcode* op, struct cpu8086* cpu);
 static void op_adc(struct opcode* op, struct cpu8086* cpu);
 static void op_add(struct opcode* op, struct cpu8086* cpu);
 static void op_and(struct opcode* op, struct cpu8086* cpu);
+static void op_callfar(struct opcode* op, struct cpu8086* cpu);
 static void op_cbw(struct opcode* op, struct cpu8086* cpu);
 static void op_cmp(struct opcode* op, struct cpu8086* cpu);
+static void op_cwd(struct opcode* op, struct cpu8086* cpu);
 static void op_daa(struct opcode* op, struct cpu8086* cpu);
 static void op_das(struct opcode* op, struct cpu8086* cpu);
 static void op_dec(struct opcode* op, struct cpu8086* cpu);
@@ -68,14 +70,19 @@ static void op_jns(struct opcode* op, struct cpu8086* cpu);
 static void op_jo(struct opcode* op, struct cpu8086* cpu);
 static void op_jp(struct opcode* op, struct cpu8086* cpu);
 static void op_js(struct opcode* op, struct cpu8086* cpu);
+static void op_lahf(struct opcode* op, struct cpu8086* cpu);
 static void op_lea(struct opcode* op, struct cpu8086* cpu);
 static void op_mov(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
+static void op_popf(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
+static void op_pushf(struct opcode* op, struct cpu8086* cpu);
+static void op_sahf(struct opcode* op, struct cpu8086* cpu);
 static void op_sbb(struct opcode* op, struct cpu8086* cpu);
 static void op_sub(struct opcode* op, struct cpu8086* cpu);
 static void op_test(struct opcode* op, struct cpu8086* cpu);
+static void op_wait(struct opcode* op, struct cpu8086* cpu);
 static void op_xchg(struct opcode* op, struct cpu8086* cpu);
 static void op_xor(struct opcode* op, struct cpu8086* cpu);
 
@@ -111,7 +118,8 @@ enum opcode_location
 
     // immed
     LOC_IMM,
-    LOC_IMM8,
+    LOC_IMM8,   // unique solely to opcode 0x83 (group IMM)
+    LOC_SEGOFF, // segment:offset, only used for CALL/JMP
 
     // ModRM
     LOC_RM,
@@ -149,8 +157,8 @@ static struct opcode op_table[] =
     { "OR",     LOC_AL,     LOC_IMM,    false,  op_or },
     { "OR",     LOC_AX,     LOC_IMM,    true,   op_or },
     { "PUSH",   LOC_CS,     LOC_NULL,   true,   op_push },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },     // This may be a future consideration.
-                                                            // (Should be pop cs?)
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },         // This may be a future consideration.
+                                                                // (Should be pop cs?)
     
     // 0x10 to 0x1F
     { "ADC",    LOC_RM,     LOC_REG,    false,  op_adc },
@@ -177,7 +185,7 @@ static struct opcode op_table[] =
     { "AND",    LOC_REG,    LOC_RM,     true,   op_and },
     { "AND",    LOC_AL,     LOC_IMM,    false,  op_and },
     { "AND",    LOC_AX,     LOC_IMM,    true,   op_and },
-    { "ES:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX ES:
+    { "ES:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX ES:
     { "DAA",    LOC_NULL,   LOC_NULL,   false,  op_daa },
     { "SUB",    LOC_RM,     LOC_REG,    false,  op_sub },
     { "SUB",    LOC_RM,     LOC_REG,    true,   op_sub },
@@ -185,7 +193,7 @@ static struct opcode op_table[] =
     { "SUB",    LOC_REG,    LOC_RM,     true,   op_sub },
     { "SUB",    LOC_AL,     LOC_IMM,    false,  op_sub },
     { "SUB",    LOC_AX,     LOC_IMM,    true,   op_sub },
-    { "CS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX CS:
+    { "CS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX CS:
     { "DAS",    LOC_NULL,   LOC_NULL,   false,  op_das },
 
     // 0x30 to 0x3F
@@ -195,7 +203,7 @@ static struct opcode op_table[] =
     { "XOR",    LOC_REG,    LOC_RM,     true,   op_xor },
     { "XOR",    LOC_AL,     LOC_IMM,    false,  op_xor },
     { "XOR",    LOC_AX,     LOC_IMM,    true,   op_xor },
-    { "SS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX SS:
+    { "SS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX SS:
     { "AAA",    LOC_NULL,   LOC_NULL,   false,  op_aaa },
     { "CMP",    LOC_RM,     LOC_REG,    false,  op_cmp },
     { "CMP",    LOC_RM,     LOC_REG,    true,   op_cmp },
@@ -203,7 +211,7 @@ static struct opcode op_table[] =
     { "CMP",    LOC_REG,    LOC_RM,     true,   op_cmp },
     { "CMP",    LOC_AL,     LOC_IMM,    false,  op_cmp },
     { "CMP",    LOC_AX,     LOC_IMM,    true,   op_cmp },
-    { "DS:",    LOC_NULL,   LOC_NULL,   false,  NULL },     // PREFIX DS:
+    { "DS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX DS:
     { "AAS",    LOC_NULL,   LOC_NULL,   false,  op_aas },
 
     // 0x40 to 0x4F
@@ -299,6 +307,24 @@ static struct opcode op_table[] =
     { "POP",    LOC_RM,     LOC_NULL,   true,   op_pop },
 
     // 0x90 to 0x9F
+    { "NOP",    LOC_AX,     LOC_AX,     true,   op_xchg },      // Technically XCHG AX AX.
+    { "XCHG",   LOC_CX,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_DX,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_BX,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_SP,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_BP,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_SI,     LOC_AX,     true,   op_xchg },
+    { "XCHG",   LOC_DI,     LOC_AX,     true,   op_xchg },
+    { "CBW",    LOC_NULL,   LOC_NULL,   true,   op_cbw },
+    { "CWD",    LOC_NULL,   LOC_NULL,   true,   op_cwd },
+    { "CALL",   LOC_NULL,   LOC_SEGOFF, true,   op_callfar },
+    { "WAIT",   LOC_NULL,   LOC_NULL,   false,  op_wait },
+    { "PUSHF",  LOC_NULL,   LOC_NULL,   false,  op_pushf },
+    { "POPF",   LOC_NULL,   LOC_NULL,   false,  op_popf },
+    { "SAHF",   LOC_NULL,   LOC_NULL,   false,  op_sahf },
+    { "LAHF",   LOC_NULL,   LOC_NULL,   false,  op_lahf },
+
+    // 0xA0 to 0xAF
 };
 
 // IMM group opcode table.
@@ -375,6 +401,19 @@ static inline void loc_write(struct cpu8086* cpu, struct location* loc, uint16_t
         loc_write_byte(cpu, loc, data);
 }
 
+static inline void cpu8086_push(struct cpu8086* cpu, uint16_t word)
+{
+    cpu->sp -= 2;
+    bus_write_short(cpu->bus, (cpu->ss << 4) + cpu->sp, word);
+}
+
+static inline uint16_t cpu8086_pop(struct cpu8086* cpu)
+{
+    uint16_t word = bus_read_short(cpu->bus, (cpu->ss << 4) + cpu->sp);;
+    cpu->sp += 2;
+    return word;
+}
+
 static inline uint16_t* cpu8086_reg_word(struct cpu8086* cpu, unsigned reg)
 {
     // This works because the registers are organised in the cpu8086 struct
@@ -404,13 +443,18 @@ static inline uint8_t cpu8086_prefetch_dequeue(struct cpu8086* cpu)
     return read;
 }
 
-static inline void cpu8086_jump(struct cpu8086* cpu, uint16_t ip, uint16_t cs)
+static inline void cpu8086_jump(struct cpu8086* cpu, uint16_t cs, uint16_t ip)
 {
+    // Clear the prefetch queue.
     cpu->hl = false;
     cpu->mt = false;
     cpu->q_r = cpu->q_w;
-    cpu->ip = cpu->current_ip = ip;
+    if (cpu->biu_prefetch_cycles != 3)
+        cpu->biu_prefetch_cycles += 4;
+    
+    // Set new CS:IP.
     cpu->cs = cs;
+    cpu->ip = cpu->current_ip = ip;
 }
 
 static inline void loc_set(struct cpu8086* cpu, 
@@ -463,6 +507,7 @@ static inline void loc_set(struct cpu8086* cpu,
         }
         case LOC_IMM:
         case LOC_IMM8:
+        case LOC_SEGOFF:
         {
             loc->type = DECODED_IMMEDIATE;
             loc->address = (uintptr_t)&cpu->immediate;
@@ -522,6 +567,8 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->disp16_byte = DISP16_NONE;
     cpu->imm8_byte = IMM8_NONE;
     cpu->imm16_byte = IMM16_NONE;
+    cpu->lo_offset = LO_OFFSET_NONE;
+    cpu->hi_offset = HI_OFFSET_NONE;
     cpu->stage = CPU8086_READY;
     cpu->modrm_byte.value = MODRM_NONE;
 }
@@ -720,10 +767,34 @@ static void op_and(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// CALL (far): call a procedure by setting both CS:IP.
+static void op_callfar(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu8086_push(cpu, cpu->cs);
+    cpu8086_push(cpu, cpu->current_ip);
+
+    uint16_t cs = loc_read(cpu, &cpu->source);
+    cpu->source.address += 2;
+    uint16_t ip = loc_read(cpu, &cpu->source);
+    cpu8086_jump(cpu, cs, ip);
+
+    // TODO: expand
+    switch (cpu->source.type)
+    {
+        case DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 28;
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
 // CBW: convert byte to word by sign-extending AL to AX
 static void op_cbw(struct opcode* op, struct cpu8086* cpu)
 {
-    cpu->ax = 0xFF00 * ((cpu->al >> 7) & 1) | cpu->al;
+    cpu->ah = 0xFF * ((cpu->al >> 7) & 1);
     cpu->cycles += 2;
 }
 
@@ -772,6 +843,13 @@ static void op_cmp(struct opcode* op, struct cpu8086* cpu)
         default:
             assert(false);
     }
+}
+
+// CWD: convert word to doubleword by sign-extending AX to DX:AX
+static void op_cwd(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu->dx = 0xFFFF * ((cpu->ax >> 15) & 1);
+    cpu->cycles += 5;
 }
 
 // DAA: "decimal adjust for addition"
@@ -922,7 +1000,7 @@ static void op_ja(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_CARRY) && !cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -935,7 +1013,7 @@ static void op_jae(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_CARRY))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -948,7 +1026,7 @@ static void op_jb(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_CARRY))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -961,7 +1039,7 @@ static void op_jbe(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_CARRY) || cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -974,7 +1052,7 @@ static void op_je(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -988,7 +1066,7 @@ static void op_jg(struct opcode* op, struct cpu8086* cpu)
     if (cpu8086_getflag(cpu, FLAG_SIGN) == cpu8086_getflag(cpu, FLAG_OVERFLOW)
         && !cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1001,7 +1079,7 @@ static void op_jge(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_SIGN) == cpu8086_getflag(cpu, FLAG_OVERFLOW))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1014,7 +1092,7 @@ static void op_jl(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_SIGN) != cpu8086_getflag(cpu, FLAG_OVERFLOW))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1028,7 +1106,7 @@ static void op_jle(struct opcode* op, struct cpu8086* cpu)
     if (cpu8086_getflag(cpu, FLAG_SIGN) != cpu8086_getflag(cpu, FLAG_OVERFLOW)
         || cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1041,7 +1119,7 @@ static void op_jne(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_ZERO))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1054,7 +1132,7 @@ static void op_jno(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_OVERFLOW))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1067,7 +1145,7 @@ static void op_jnp(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_PARITY))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1080,7 +1158,7 @@ static void op_jns(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (!cpu8086_getflag(cpu, FLAG_SIGN))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1093,7 +1171,7 @@ static void op_jo(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_OVERFLOW))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1106,7 +1184,7 @@ static void op_jp(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_PARITY))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
@@ -1119,10 +1197,17 @@ static void op_js(struct opcode* op, struct cpu8086* cpu)
     int8_t offset = loc_read(cpu, &cpu->source);
     if (cpu8086_getflag(cpu, FLAG_SIGN))
     {
-        cpu8086_jump(cpu, cpu->current_ip + offset, cpu->cs);
+        cpu8086_jump(cpu, cpu->cs, cpu->current_ip + offset);
         cpu->cycles += 12;
     }
 
+    cpu->cycles += 4;
+}
+
+// LAHF: load AH from FLAGS
+static void op_lahf(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu->ah = cpu->flags;
     cpu->cycles += 4;
 }
 
@@ -1229,9 +1314,8 @@ static void op_or(struct opcode* op, struct cpu8086* cpu)
 // POP: pop a word from the stack into a location
 static void op_pop(struct opcode* op, struct cpu8086* cpu)
 {
-    uint16_t result = bus_read_short(cpu->bus, (cpu->ss << 4) + cpu->sp);
+    uint16_t result = cpu8086_pop(cpu);
     loc_write(cpu, &cpu->destination, result);
-    cpu->sp += 2;
 
     switch (cpu->destination.type)
     {
@@ -1252,12 +1336,18 @@ static void op_pop(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// POPF: pop FLGAS off the stack
+static void op_popf(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu->flags = cpu8086_pop(cpu);
+    cpu->cycles += 8;
+}
+
 // PUSH: push a word from a location onto the stack
 static void op_push(struct opcode* op, struct cpu8086* cpu)
 {
     uint16_t dest = loc_read(cpu, &cpu->destination);
-    cpu->sp -= 2;
-    bus_write_short(cpu->bus, (cpu->ss << 4) + cpu->sp, dest);
+    cpu8086_push(cpu, dest);
 
     switch (cpu->destination.type)
     {
@@ -1280,6 +1370,24 @@ static void op_push(struct opcode* op, struct cpu8086* cpu)
         default:
             assert(false);
     }
+}
+
+// PUHSF: push FLAGS onto the stack
+static void op_pushf(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu8086_push(cpu, cpu->flags);
+    cpu->cycles += 10;
+}
+
+// SAHF: store AH into FLAGS
+static void op_sahf(struct opcode* op, struct cpu8086* cpu)
+{
+    cpu8086_setflag(cpu, FLAG_CARRY, cpu->ah & FLAG_CARRY);
+    cpu8086_setflag(cpu, FLAG_PARITY, cpu->ah & FLAG_PARITY);
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, cpu->ah & FLAG_AUXILIARY);
+    cpu8086_setflag(cpu, FLAG_ZERO, cpu->ah & FLAG_ZERO);
+    cpu8086_setflag(cpu, FLAG_SIGN, cpu->ah & FLAG_SIGN);
+    cpu->cycles += 4;
 }
 
 // SBB: subtract src from dest, also subtract the carry flag
@@ -1420,6 +1528,13 @@ static void op_test(struct opcode* op, struct cpu8086* cpu)
     }
 }
 
+// WAIT: pause execution while TEST is held high
+static void op_wait(struct opcode* op, struct cpu8086* cpu)
+{
+    // Handled in cpu8086_clock().
+    cpu->cycles += 3;
+}
+
 // XCHG: exchange between destination/source
 static void op_xchg(struct opcode* op, struct cpu8086* cpu)
 {
@@ -1430,7 +1545,7 @@ static void op_xchg(struct opcode* op, struct cpu8086* cpu)
 
     switch ((cpu->destination.type << 3) | cpu->source.type)
     {
-        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_REGISTER:
         {
             cpu->cycles += 3;
             break;
@@ -1546,6 +1661,10 @@ void cpu8086_clock(struct cpu8086* cpu)
         cpu->biu_prefetch_cycles = (cpu->biu_prefetch_cycles - 1) % 4;
     }
 
+    // If the last opcode was WAIT and TEST is high, stall for another 5 cycles.
+    if (cpu->opcode_byte == 0x9B && cpu->test)
+        cpu->cycles += 5;
+
     // Skip if there are remaining cycles of execution.
     if (cpu->cycles > 0)
     {
@@ -1556,6 +1675,9 @@ void cpu8086_clock(struct cpu8086* cpu)
     // Skip if the prefetch queue is empty. (This is sort of like FC, I supppose.)
     if (cpu->mt)
         return;
+
+    if (cpu->stage == CPU8086_EXECUTING)
+        cpu8086_reset_execution_regs(cpu);
 
     struct opcode* op;
     if (cpu->opcode_byte != OPCODE_NONE)
@@ -1599,7 +1721,7 @@ next_stage: // oh dear
             op = &op_table[cpu->opcode_byte];
             if (op->destination == LOC_RM || op->source == LOC_RM)
                 cpu->stage = CPU8086_FETCH_MODRM;
-            else if (op->source == LOC_IMM || op->source == LOC_IMM8)
+            else if (op->source == LOC_IMM || op->source == LOC_IMM8 || op->source == LOC_SEGOFF)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -1725,7 +1847,7 @@ next_stage: // oh dear
                 cpu->rm = ((*cpu8086_reg_word(cpu, prefix) << 4) + cpu->rm) & 0xFFFFF;
             }
 
-            if (op->source == LOC_IMM || op->source == LOC_IMM8)
+            if (op->source == LOC_IMM || op->source == LOC_IMM8 || op->source == LOC_SEGOFF)
                 cpu->stage = CPU8086_FETCH_IMM;
             else
                 cpu->stage = CPU8086_ADDRESS_MODE;
@@ -1742,7 +1864,7 @@ next_stage: // oh dear
                 cpu->imm8_byte = cpu8086_prefetch_dequeue(cpu);
             }
 
-            if (op->is_word)
+            if (op->is_word && cpu->imm16_byte == IMM16_NONE)
             {
                 // Opcode 0x83 works quite differently: despite it being a
                 // word instruction, the immediate value read is only 8-bit.
@@ -1757,9 +1879,32 @@ next_stage: // oh dear
                 }
             }
 
-            cpu->immediate = op->is_word
-                           ? (cpu->imm16_byte << 8) | cpu->imm8_byte
-                           : cpu->imm8_byte;
+            // This is used only for CALLFAR/JMPFAR (i.e. segment:offset).
+            if (op->source == LOC_SEGOFF)
+            {
+                if (cpu->lo_offset == LO_OFFSET_NONE)
+                {
+                    if (cpu->mt)
+                        return;
+                    cpu->lo_offset = cpu8086_prefetch_dequeue(cpu);
+                }
+                if (cpu->hi_offset == HI_OFFSET_NONE)
+                {
+                    if (cpu->mt)
+                        return;
+                    cpu->hi_offset = cpu8086_prefetch_dequeue(cpu);
+                }
+            }
+
+            if (op->is_word)
+            {
+                cpu->immediate = (cpu->imm16_byte << 8) | cpu->imm8_byte;
+                if (op->source == LOC_SEGOFF)
+                    cpu->immediate |= (cpu->hi_offset << 24) | (cpu->lo_offset << 16);
+            }
+            else
+                cpu->immediate = cpu->imm8_byte;
+
             cpu->stage = CPU8086_ADDRESS_MODE;
             goto next_stage;
         }
@@ -1778,7 +1923,6 @@ next_stage: // oh dear
         {
             assert(op->func);
             op->func(op, cpu);
-            cpu8086_reset_execution_regs(cpu);
             cpu->cycles -= 1;   // For simplicity's sake, I decided to just copy the
                                 // cycles count of each instruction for all sets of
                                 // possible operands to each instruction. However,

@@ -17,7 +17,7 @@ struct bus* bus_new(size_t memory)
 
 uint8_t bus_read_byte(struct bus* bus, uintptr_t address)
 {
-    return bus->memory[address];
+    return bus->memory[address & 0xFFFFF];
 }
 
 uint16_t bus_read_short(struct bus* bus, uintptr_t address)

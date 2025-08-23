@@ -61,6 +61,8 @@
 #define DISP16_NONE     0xFFFF
 #define IMM8_NONE       0xFFFF
 #define IMM16_NONE      0xFFFF
+#define LO_OFFSET_NONE  0xFFFF
+#define HI_OFFSET_NONE  0xFFFF
 
 enum cpu8086_stage
 {
@@ -167,9 +169,11 @@ struct cpu8086
     uint16_t opcode_byte;           // The actual byte for the opcode itself (this may also be an extension byte).
     uint16_t disp8_byte;            // Disp8 byte.
     uint16_t disp16_byte;           // Disp16 byte.
-    uint16_t imm8_byte;             // Imm8 byte.
-    uint16_t imm16_byte;            // Imm16 byte.
-    uint16_t immediate;             // Calculated immediate.
+    uint16_t imm8_byte;             // Imm8 byte or lo segment byte.
+    uint16_t imm16_byte;            // Imm16 byte or hi segment byte.
+    uint16_t lo_offset;             // Lo offset byte.
+    uint16_t hi_offset;             // Hi offset byte.
+    uint32_t immediate;             // Calculated immediate.
     uintptr_t rm;                   // Calculated rm during ModRM stage.
     uintptr_t reg;                  // Calculated reg during ModRM stage.
     enum cpu8086_stage stage;       // Current stage of instruction byte fetching.
@@ -187,6 +191,9 @@ struct cpu8086
     struct location destination;    // Destination of the opcode.
     struct location source;         // Source of the opcode.
     bool modrm_is_segreg;           // Does the ModRM byte use segreg?
+
+    // 8086 pins.
+    bool test               : 1;    // Used with WAIT.
 };
 
 struct cpu8086* cpu8086_new(struct bus* bus);
