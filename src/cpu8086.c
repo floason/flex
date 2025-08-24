@@ -119,12 +119,19 @@ enum opcode_location
     // immed
     LOC_IMM,
     LOC_IMM8,   // unique solely to opcode 0x83 (group IMM)
-    LOC_SEGOFF, // segment:offset, only used for CALL/JMP
 
     // ModRM
     LOC_RM,
     LOC_REG,
     LOC_SREG,
+
+    // address
+    LOC_ADDR,
+    LOC_SEGOFF, // segment:offset, only used for CALL/JMP
+
+    // string
+    LOC_STRSRC,
+    LOC_STRDST,
 
     LOC_NULL
 };
@@ -135,6 +142,7 @@ struct opcode
     enum opcode_location destination;
     enum opcode_location source;
     bool is_word;
+    bool is_string;
     void (*func)(struct opcode* op, struct cpu8086* cpu);
 };
 
@@ -142,189 +150,205 @@ struct opcode
 static struct opcode op_table[] = 
 {
     // 0x00 to 0x0F
-    { "ADD",    LOC_RM,     LOC_REG,    false,  op_add },
-    { "ADD",    LOC_RM,     LOC_REG,    true,   op_add },
-    { "ADD",    LOC_REG,    LOC_RM,     false,  op_add },
-    { "ADD",    LOC_REG,    LOC_RM,     true,   op_add },
-    { "ADD",    LOC_AL,     LOC_IMM,    false,  op_add },
-    { "ADD",    LOC_AX,     LOC_IMM,    true,   op_add },
-    { "PUSH",   LOC_ES,     LOC_NULL,   true,   op_push },
-    { "POP",    LOC_ES,     LOC_NULL,   true,   op_pop },
-    { "OR",     LOC_RM,     LOC_REG,    false,  op_or },
-    { "OR",     LOC_RM,     LOC_REG,    true,   op_or },
-    { "OR",     LOC_REG,    LOC_RM,     false,  op_or },
-    { "OR",     LOC_REG,    LOC_RM,     true,   op_or },
-    { "OR",     LOC_AL,     LOC_IMM,    false,  op_or },
-    { "OR",     LOC_AX,     LOC_IMM,    true,   op_or },
-    { "PUSH",   LOC_CS,     LOC_NULL,   true,   op_push },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },         // This may be a future consideration.
-                                                                // (Should be pop cs?)
+    { "ADD",    LOC_RM,     LOC_REG,    false,  false,  op_add },
+    { "ADD",    LOC_RM,     LOC_REG,    true,   false,  op_add },
+    { "ADD",    LOC_REG,    LOC_RM,     false,  false,  op_add },
+    { "ADD",    LOC_REG,    LOC_RM,     true,   false,  op_add },
+    { "ADD",    LOC_AL,     LOC_IMM,    false,  false,  op_add },
+    { "ADD",    LOC_AX,     LOC_IMM,    true,   false,  op_add },
+    { "PUSH",   LOC_ES,     LOC_NULL,   true,   false,  op_push },
+    { "POP",    LOC_ES,     LOC_NULL,   true,   false,  op_pop },
+    { "OR",     LOC_RM,     LOC_REG,    false,  false,  op_or },
+    { "OR",     LOC_RM,     LOC_REG,    true,   false,  op_or },
+    { "OR",     LOC_REG,    LOC_RM,     false,  false,  op_or },
+    { "OR",     LOC_REG,    LOC_RM,     true,   false,  op_or },
+    { "OR",     LOC_AL,     LOC_IMM,    false,  false,  op_or },
+    { "OR",     LOC_AX,     LOC_IMM,    true,   false,  op_or },
+    { "PUSH",   LOC_CS,     LOC_NULL,   true,   false,  op_push },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },     // This may be a future consideration.
+                                                                    // (Should be pop cs?)
     
     // 0x10 to 0x1F
-    { "ADC",    LOC_RM,     LOC_REG,    false,  op_adc },
-    { "ADC",    LOC_RM,     LOC_REG,    true,   op_adc },
-    { "ADC",    LOC_REG,    LOC_RM,     false,  op_adc },
-    { "ADC",    LOC_REG,    LOC_RM,     true,   op_adc },
-    { "ADC",    LOC_AL,     LOC_IMM,    false,  op_adc },
-    { "ADC",    LOC_AX,     LOC_IMM,    true,   op_adc },
-    { "PUSH",   LOC_SS,     LOC_NULL,   true,   op_push },
-    { "POP",    LOC_SS,     LOC_NULL,   true,   op_pop },
-    { "SBB",    LOC_RM,     LOC_REG,    false,  op_sbb },
-    { "SBB",    LOC_RM,     LOC_REG,    true,   op_sbb },
-    { "SBB",    LOC_REG,    LOC_RM,     false,  op_sbb },
-    { "SBB",    LOC_REG,    LOC_RM,     true,   op_sbb },
-    { "SBB",    LOC_AL,     LOC_IMM,    false,  op_sbb },
-    { "SBB",    LOC_AX,     LOC_IMM,    true,   op_sbb },
-    { "PUSH",   LOC_DS,     LOC_NULL,   true,   op_push },
-    { "POP",    LOC_DS,     LOC_NULL,   true,   op_pop },
+    { "ADC",    LOC_RM,     LOC_REG,    false,  false,  op_adc },
+    { "ADC",    LOC_RM,     LOC_REG,    true,   false,  op_adc },
+    { "ADC",    LOC_REG,    LOC_RM,     false,  false,  op_adc },
+    { "ADC",    LOC_REG,    LOC_RM,     true,   false,  op_adc },
+    { "ADC",    LOC_AL,     LOC_IMM,    false,  false,  op_adc },
+    { "ADC",    LOC_AX,     LOC_IMM,    true,   false,  op_adc },
+    { "PUSH",   LOC_SS,     LOC_NULL,   true,   false,  op_push },
+    { "POP",    LOC_SS,     LOC_NULL,   true,   false,  op_pop },
+    { "SBB",    LOC_RM,     LOC_REG,    false,  false,  op_sbb },
+    { "SBB",    LOC_RM,     LOC_REG,    true,   false,  op_sbb },
+    { "SBB",    LOC_REG,    LOC_RM,     false,  false,  op_sbb },
+    { "SBB",    LOC_REG,    LOC_RM,     true,   false,  op_sbb },
+    { "SBB",    LOC_AL,     LOC_IMM,    false,  false,  op_sbb },
+    { "SBB",    LOC_AX,     LOC_IMM,    true,   false,  op_sbb },
+    { "PUSH",   LOC_DS,     LOC_NULL,   true,   false,  op_push },
+    { "POP",    LOC_DS,     LOC_NULL,   true,   false,  op_pop },
 
     // 0x20 to 0x2F
-    { "AND",    LOC_RM,     LOC_REG,    false,  op_and },
-    { "AND",    LOC_RM,     LOC_REG,    true,   op_and },
-    { "AND",    LOC_REG,    LOC_RM,     false,  op_and },
-    { "AND",    LOC_REG,    LOC_RM,     true,   op_and },
-    { "AND",    LOC_AL,     LOC_IMM,    false,  op_and },
-    { "AND",    LOC_AX,     LOC_IMM,    true,   op_and },
-    { "ES:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX ES:
-    { "DAA",    LOC_NULL,   LOC_NULL,   false,  op_daa },
-    { "SUB",    LOC_RM,     LOC_REG,    false,  op_sub },
-    { "SUB",    LOC_RM,     LOC_REG,    true,   op_sub },
-    { "SUB",    LOC_REG,    LOC_RM,     false,  op_sub },
-    { "SUB",    LOC_REG,    LOC_RM,     true,   op_sub },
-    { "SUB",    LOC_AL,     LOC_IMM,    false,  op_sub },
-    { "SUB",    LOC_AX,     LOC_IMM,    true,   op_sub },
-    { "CS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX CS:
-    { "DAS",    LOC_NULL,   LOC_NULL,   false,  op_das },
+    { "AND",    LOC_RM,     LOC_REG,    false,  false,  op_and },
+    { "AND",    LOC_RM,     LOC_REG,    true,   false,  op_and },
+    { "AND",    LOC_REG,    LOC_RM,     false,  false,  op_and },
+    { "AND",    LOC_REG,    LOC_RM,     true,   false,  op_and },
+    { "AND",    LOC_AL,     LOC_IMM,    false,  false,  op_and },
+    { "AND",    LOC_AX,     LOC_IMM,    true,   false,  op_and },
+    { "ES:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX ES:
+    { "DAA",    LOC_NULL,   LOC_NULL,   false,  false,  op_daa },
+    { "SUB",    LOC_RM,     LOC_REG,    false,  false,  op_sub },
+    { "SUB",    LOC_RM,     LOC_REG,    true,   false,  op_sub },
+    { "SUB",    LOC_REG,    LOC_RM,     false,  false,  op_sub },
+    { "SUB",    LOC_REG,    LOC_RM,     true,   false,  op_sub },
+    { "SUB",    LOC_AL,     LOC_IMM,    false,  false,  op_sub },
+    { "SUB",    LOC_AX,     LOC_IMM,    true,   false,  op_sub },
+    { "CS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX CS:
+    { "DAS",    LOC_NULL,   LOC_NULL,   false,  false,  op_das },
 
     // 0x30 to 0x3F
-    { "XOR",    LOC_RM,     LOC_REG,    false,  op_xor },
-    { "XOR",    LOC_RM,     LOC_REG,    true,   op_xor },
-    { "XOR",    LOC_REG,    LOC_RM,     false,  op_xor },
-    { "XOR",    LOC_REG,    LOC_RM,     true,   op_xor },
-    { "XOR",    LOC_AL,     LOC_IMM,    false,  op_xor },
-    { "XOR",    LOC_AX,     LOC_IMM,    true,   op_xor },
-    { "SS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX SS:
-    { "AAA",    LOC_NULL,   LOC_NULL,   false,  op_aaa },
-    { "CMP",    LOC_RM,     LOC_REG,    false,  op_cmp },
-    { "CMP",    LOC_RM,     LOC_REG,    true,   op_cmp },
-    { "CMP",    LOC_REG,    LOC_RM,     false,  op_cmp },
-    { "CMP",    LOC_REG,    LOC_RM,     true,   op_cmp },
-    { "CMP",    LOC_AL,     LOC_IMM,    false,  op_cmp },
-    { "CMP",    LOC_AX,     LOC_IMM,    true,   op_cmp },
-    { "DS:",    LOC_NULL,   LOC_NULL,   false,  NULL },         // PREFIX DS:
-    { "AAS",    LOC_NULL,   LOC_NULL,   false,  op_aas },
+    { "XOR",    LOC_RM,     LOC_REG,    false,  false,  op_xor },
+    { "XOR",    LOC_RM,     LOC_REG,    true,   false,  op_xor },
+    { "XOR",    LOC_REG,    LOC_RM,     false,  false,  op_xor },
+    { "XOR",    LOC_REG,    LOC_RM,     true,   false,  op_xor },
+    { "XOR",    LOC_AL,     LOC_IMM,    false,  false,  op_xor },
+    { "XOR",    LOC_AX,     LOC_IMM,    true,   false,  op_xor },
+    { "SS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX SS:
+    { "AAA",    LOC_NULL,   LOC_NULL,   false,  false,  op_aaa },
+    { "CMP",    LOC_RM,     LOC_REG,    false,  false,  op_cmp },
+    { "CMP",    LOC_RM,     LOC_REG,    true,   false,  op_cmp },
+    { "CMP",    LOC_REG,    LOC_RM,     false,  false,  op_cmp },
+    { "CMP",    LOC_REG,    LOC_RM,     true,   false,  op_cmp },
+    { "CMP",    LOC_AL,     LOC_IMM,    false,  false,  op_cmp },
+    { "CMP",    LOC_AX,     LOC_IMM,    true,   false,  op_cmp },
+    { "DS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX DS:
+    { "AAS",    LOC_NULL,   LOC_NULL,   false,  false,  op_aas },
 
     // 0x40 to 0x4F
-    { "INC",    LOC_AX,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_CX,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_DX,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_BX,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_SP,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_BP,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_SI,     LOC_NULL,   true,   op_inc },
-    { "INC",    LOC_DI,     LOC_NULL,   true,   op_inc },
-    { "DEC",    LOC_AX,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_CX,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_DX,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_BX,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_SP,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_BP,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_SI,     LOC_NULL,   true,   op_dec },
-    { "DEC",    LOC_DI,     LOC_NULL,   true,   op_dec },
+    { "INC",    LOC_AX,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_CX,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_DX,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_BX,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_SP,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_BP,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_SI,     LOC_NULL,   true,   false,  op_inc },
+    { "INC",    LOC_DI,     LOC_NULL,   true,   false,  op_inc },
+    { "DEC",    LOC_AX,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_CX,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_DX,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_BX,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_SP,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_BP,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_SI,     LOC_NULL,   true,   false,  op_dec },
+    { "DEC",    LOC_DI,     LOC_NULL,   true,   false,  op_dec },
 
     // 0x50 to 0x5F
-    { "PUSH",   LOC_AX,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_CX,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_DX,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_BX,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_SP,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_BP,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_SI,     LOC_NULL,   true,   op_push },
-    { "PUSH",   LOC_DI,     LOC_NULL,   true,   op_push },
-    { "POP",    LOC_AX,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_CX,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_DX,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_BX,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_SP,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_BP,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_SI,     LOC_NULL,   true,   op_pop },
-    { "POP",    LOC_DI,     LOC_NULL,   true,   op_pop },
+    { "PUSH",   LOC_AX,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_CX,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_DX,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_BX,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_SP,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_BP,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_SI,     LOC_NULL,   true,   false,  op_push },
+    { "PUSH",   LOC_DI,     LOC_NULL,   true,   false,  op_push },
+    { "POP",    LOC_AX,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_CX,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_DX,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_BX,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_SP,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_BP,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_SI,     LOC_NULL,   true,   false,  op_pop },
+    { "POP",    LOC_DI,     LOC_NULL,   true,   false,  op_pop },
 
     // 0x60 to 0x6F
     // I believe this just mirrors 0x70 - 0x7F, but I'm not focusing
     // on illegal instructions for now.
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },
 
     // 0x70 to 0x7F
-    { "JO",     LOC_NULL,   LOC_IMM,    false,  op_jo },
-    { "JNO",    LOC_NULL,   LOC_IMM,    false,  op_jno },
-    { "JB",     LOC_NULL,   LOC_IMM,    false,  op_jb },
-    { "JAE",    LOC_NULL,   LOC_IMM,    false,  op_jae },
-    { "JE",     LOC_NULL,   LOC_IMM,    false,  op_je },
-    { "JNE",    LOC_NULL,   LOC_IMM,    false,  op_jne },
-    { "JBE",    LOC_NULL,   LOC_IMM,    false,  op_jbe },
-    { "JA",     LOC_NULL,   LOC_IMM,    false,  op_ja },
-    { "JS",     LOC_NULL,   LOC_IMM,    false,  op_js },
-    { "JNS",    LOC_NULL,   LOC_IMM,    false,  op_jns },
-    { "JP",     LOC_NULL,   LOC_IMM,    false,  op_jp },
-    { "JNP",    LOC_NULL,   LOC_IMM,    false,  op_jnp },
-    { "JL",     LOC_NULL,   LOC_IMM,    false,  op_jl },
-    { "JGE",    LOC_NULL,   LOC_IMM,    false,  op_jge },
-    { "JLE",    LOC_NULL,   LOC_IMM,    false,  op_jle },
-    { "JG",     LOC_NULL,   LOC_IMM,    false,  op_jg },
+    { "JO",     LOC_NULL,   LOC_IMM,    false,  false,  op_jo },
+    { "JNO",    LOC_NULL,   LOC_IMM,    false,  false,  op_jno },
+    { "JB",     LOC_NULL,   LOC_IMM,    false,  false,  op_jb },
+    { "JAE",    LOC_NULL,   LOC_IMM,    false,  false,  op_jae },
+    { "JE",     LOC_NULL,   LOC_IMM,    false,  false,  op_je },
+    { "JNE",    LOC_NULL,   LOC_IMM,    false,  false,  op_jne },
+    { "JBE",    LOC_NULL,   LOC_IMM,    false,  false,  op_jbe },
+    { "JA",     LOC_NULL,   LOC_IMM,    false,  false,  op_ja },
+    { "JS",     LOC_NULL,   LOC_IMM,    false,  false,  op_js },
+    { "JNS",    LOC_NULL,   LOC_IMM,    false,  false,  op_jns },
+    { "JP",     LOC_NULL,   LOC_IMM,    false,  false,  op_jp },
+    { "JNP",    LOC_NULL,   LOC_IMM,    false,  false,  op_jnp },
+    { "JL",     LOC_NULL,   LOC_IMM,    false,  false,  op_jl },
+    { "JGE",    LOC_NULL,   LOC_IMM,    false,  false,  op_jge },
+    { "JLE",    LOC_NULL,   LOC_IMM,    false,  false,  op_jle },
+    { "JG",     LOC_NULL,   LOC_IMM,    false,  false,  op_jg },
 
     // 0x80 to 0x8F
-    { "IMM",    LOC_RM,     LOC_IMM,    false,  op_imm },
-    { "IMM",    LOC_RM,     LOC_IMM,    true,   op_imm },
-    { "IMM",    LOC_RM,     LOC_IMM,    false,  op_imm },
-    { "IMM",    LOC_RM,     LOC_IMM8,   true,   op_imm },
-    { "TEST",   LOC_REG,    LOC_RM,     false,  op_test },
-    { "TEST",   LOC_REG,    LOC_RM,     true,   op_test },
-    { "XCHG",   LOC_REG,    LOC_RM,     false,  op_xchg },
-    { "XCHG",   LOC_REG,    LOC_RM,     true,   op_xchg },
-    { "MOV",    LOC_RM,     LOC_REG,    false,  op_mov },
-    { "MOV",    LOC_RM,     LOC_REG,    true,   op_mov },
-    { "MOV",    LOC_REG,    LOC_RM,     false,  op_mov },
-    { "MOV",    LOC_REG,    LOC_RM,     true,   op_mov },
-    { "MOV",    LOC_RM,     LOC_SREG,   true,   op_mov },
-    { "LEA",    LOC_REG,    LOC_RM,     true,   op_lea },
-    { "MOV",    LOC_SREG,   LOC_RM,     true,   op_mov },
-    { "POP",    LOC_RM,     LOC_NULL,   true,   op_pop },
+    { "IMM",    LOC_RM,     LOC_IMM,    false,  false,  op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM,    true,   false,  op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM,    false,  false,  op_imm },
+    { "IMM",    LOC_RM,     LOC_IMM8,   true,   false,  op_imm },
+    { "TEST",   LOC_REG,    LOC_RM,     false,  false,  op_test },
+    { "TEST",   LOC_REG,    LOC_RM,     true,   false,  op_test },
+    { "XCHG",   LOC_REG,    LOC_RM,     false,  false,  op_xchg },
+    { "XCHG",   LOC_REG,    LOC_RM,     true,   false,  op_xchg },
+    { "MOV",    LOC_RM,     LOC_REG,    false,  false,  op_mov },
+    { "MOV",    LOC_RM,     LOC_REG,    true,   false,  op_mov },
+    { "MOV",    LOC_REG,    LOC_RM,     false,  false,  op_mov },
+    { "MOV",    LOC_REG,    LOC_RM,     true,   false,  op_mov },
+    { "MOV",    LOC_RM,     LOC_SREG,   true,   false,  op_mov },
+    { "LEA",    LOC_REG,    LOC_RM,     true,   false,  op_lea },
+    { "MOV",    LOC_SREG,   LOC_RM,     true,   false,  op_mov },
+    { "POP",    LOC_RM,     LOC_NULL,   true,   false,  op_pop },
 
     // 0x90 to 0x9F
-    { "NOP",    LOC_AX,     LOC_AX,     true,   op_xchg },      // Technically XCHG AX AX.
-    { "XCHG",   LOC_CX,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_DX,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_BX,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_SP,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_BP,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_SI,     LOC_AX,     true,   op_xchg },
-    { "XCHG",   LOC_DI,     LOC_AX,     true,   op_xchg },
-    { "CBW",    LOC_NULL,   LOC_NULL,   true,   op_cbw },
-    { "CWD",    LOC_NULL,   LOC_NULL,   true,   op_cwd },
-    { "CALL",   LOC_NULL,   LOC_SEGOFF, true,   op_callfar },
-    { "WAIT",   LOC_NULL,   LOC_NULL,   false,  op_wait },
-    { "PUSHF",  LOC_NULL,   LOC_NULL,   false,  op_pushf },
-    { "POPF",   LOC_NULL,   LOC_NULL,   false,  op_popf },
-    { "SAHF",   LOC_NULL,   LOC_NULL,   false,  op_sahf },
-    { "LAHF",   LOC_NULL,   LOC_NULL,   false,  op_lahf },
+    { "NOP",    LOC_AX,     LOC_AX,     true,   false,  op_xchg },  // Technically XCHG AX AX.
+    { "XCHG",   LOC_CX,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_DX,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_BX,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_SP,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_BP,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_SI,     LOC_AX,     true,   false,  op_xchg },
+    { "XCHG",   LOC_DI,     LOC_AX,     true,   false,  op_xchg },
+    { "CBW",    LOC_NULL,   LOC_NULL,   true,   false,  op_cbw },
+    { "CWD",    LOC_NULL,   LOC_NULL,   true,   false,  op_cwd },
+    { "CALL",   LOC_NULL,   LOC_SEGOFF, true,   false,  op_callfar },
+    { "WAIT",   LOC_NULL,   LOC_NULL,   false,  false,  op_wait },
+    { "PUSHF",  LOC_NULL,   LOC_NULL,   false,  false,  op_pushf },
+    { "POPF",   LOC_NULL,   LOC_NULL,   false,  false,  op_popf },
+    { "SAHF",   LOC_NULL,   LOC_NULL,   false,  false,  op_sahf },
+    { "LAHF",   LOC_NULL,   LOC_NULL,   false,  false,  op_lahf },
 
     // 0xA0 to 0xAF
+    { "MOV",    LOC_AL,     LOC_ADDR,   false,  false,  op_mov },
+    { "MOV",    LOC_AX,     LOC_ADDR,   true,   false,  op_mov },
+    { "MOV",    LOC_ADDR,   LOC_AL,     false,  false,  op_mov },
+    { "MOV",    LOC_ADDR,   LOC_AX,     true,   false,  op_mov },
+    { "MOVSB",  LOC_STRDST, LOC_STRSRC, false,  true,   op_mov },
+    { "MOVSW",  LOC_STRDST, LOC_STRSRC, true,   true,   op_mov },
+    { "CMPSB",  LOC_STRSRC, LOC_STRDST, false,  true,   op_cmp },
+    { "CMPSW",  LOC_STRSRC, LOC_STRDST, true,   true,   op_cmp },
+    { "TEST",   LOC_AL,     LOC_IMM,    false,  false,  op_test },
+    { "TEST",   LOC_AX,     LOC_IMM,    true,   false,  op_test },
+    { "STOSB",  LOC_STRDST, LOC_AL,     false,  true,   op_mov },
+    { "STOSW",  LOC_STRDST, LOC_AX,     true,   true,   op_mov },
+    { "LODSB",  LOC_AL,     LOC_STRSRC, false,  true,   op_mov },
+    { "LODSW",  LOC_AX,     LOC_STRSRC, true,   true,   op_mov },
+    { "SCASB",  LOC_AL,     LOC_STRDST, false,  true,   op_cmp },
+    { "SCASB",  LOC_AL,     LOC_STRDST, true,   true,   op_cmp },
 };
 
 // IMM group opcode table.
@@ -335,14 +359,14 @@ static struct opcode op_table[] =
 static struct opcode imm_table[] =
 {
     // 0x00 to 0x07
-    { "ADD",    LOC_NULL,   LOC_NULL,   false,  op_add },
-    { "OR",     LOC_NULL,   LOC_NULL,   false,  op_or },
-    { "ADC",    LOC_NULL,   LOC_NULL,   false,  op_adc },
-    { "SBB",    LOC_NULL,   LOC_NULL,   false,  op_sbb },
-    { "AND",    LOC_NULL,   LOC_NULL,   false,  op_and },
-    { "SUB",    LOC_NULL,   LOC_NULL,   false,  op_sub },
-    { "XOR",    LOC_NULL,   LOC_NULL,   false,  op_xor },
-    { "CMP",    LOC_NULL,   LOC_NULL,   false,  op_cmp },
+    { "ADD",    LOC_NULL,   LOC_NULL,   false,  false,  op_add },
+    { "OR",     LOC_NULL,   LOC_NULL,   false,  false,  op_or },
+    { "ADC",    LOC_NULL,   LOC_NULL,   false,  false,  op_adc },
+    { "SBB",    LOC_NULL,   LOC_NULL,   false,  false,  op_sbb },
+    { "AND",    LOC_NULL,   LOC_NULL,   false,  false,  op_and },
+    { "SUB",    LOC_NULL,   LOC_NULL,   false,  false,  op_sub },
+    { "XOR",    LOC_NULL,   LOC_NULL,   false,  false,  op_xor },
+    { "CMP",    LOC_NULL,   LOC_NULL,   false,  false,  op_cmp },
 };
 
 static inline uint8_t loc_read_byte(struct cpu8086* cpu, struct location* loc)
@@ -507,13 +531,6 @@ static inline void loc_set(struct cpu8086* cpu,
         }
         case LOC_IMM:
         case LOC_IMM8:
-        case LOC_SEGOFF:
-        {
-            loc->type = DECODED_IMMEDIATE;
-            loc->address = (uintptr_t)&cpu->immediate;
-            loc->virtual = false;
-            break;
-        }
         case LOC_RM:
         {
             loc->type = (cpu->modrm_byte.fields.mod != MOD_REG)
@@ -532,6 +549,35 @@ static inline void loc_set(struct cpu8086* cpu,
             loc->address = cpu->reg;
             loc->virtual = false;
             break;
+        }
+        case LOC_ADDR:
+        {
+            loc->type = DECODED_MEMORY;
+            loc->address = cpu->immediate;
+            loc->virtual = true;
+            break;
+        }
+        case LOC_SEGOFF:
+        {
+            loc->type = DECODED_IMMEDIATE;
+            loc->address = (uintptr_t)&cpu->immediate;
+            loc->virtual = false;
+            break;
+        }
+        case LOC_STRSRC:
+        {
+            unsigned prefix = DS;
+            if (cpu->prefix_g2 != PREFIX_G2_NONE)
+                prefix = ES + (cpu->prefix_g2 - PREFIX_G2_ES) / 8;
+            loc->type = DECODED_STRING;
+            loc->address = ((*cpu8086_reg_word(cpu, prefix) << 4) + cpu->si) & 0xFFFFF;
+            loc->virtual = true;
+        }
+        case LOC_STRDST:
+        {
+            loc->type = DECODED_STRING;
+            loc->address = (cpu->es << 4) + cpu->di;
+            loc->virtual = true;
         }
         case LOC_NULL:
             break;
@@ -560,6 +606,7 @@ static inline void cpu8086_setpzs_flags(struct cpu8086* cpu, uint16_t result, bo
 
 static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
 {
+    cpu->repeat = false;
     cpu->prefix_g1 = PREFIX_G1_NONE;
     cpu->prefix_g2 = PREFIX_G1_NONE;
     cpu->opcode_byte = OPCODE_NONE;
@@ -808,7 +855,7 @@ static void op_cmp(struct opcode* op, struct cpu8086* cpu)
     
     cpu8086_setpzs_flags(cpu, result, op->is_word);
     cpu8086_setflag(cpu, FLAG_CARRY, result > mask_buffer[op->is_word]);
-    cpu8086_setflag(cpu, FLAG_AUXILIARY, ((dest & 0xF) + (src & 0xF) > 0xF));
+    cpu8086_setflag(cpu, FLAG_AUXILIARY, (dest & 0xF) < ((~src + 1) & 0xF));
     cpu8086_setflag(cpu, FLAG_OVERFLOW, 
         (result ^ dest) & (result ^ src) & (1 << sign_bit[op->is_word]));
     
@@ -840,6 +887,20 @@ static void op_cmp(struct opcode* op, struct cpu8086* cpu)
             cpu->cycles += 10;
             break;
         }
+
+        // CMPS
+        case (DECODED_STRING << 3) | DECODED_STRING:
+        {
+            cpu->cycles += 22;
+            break;
+        }
+
+        // SCAS
+        case (DECODED_ACCUMULATOR << 3) | DECODED_STRING:
+        {
+            cpu->cycles += 15;
+        }
+
         default:
             assert(false);
     }
@@ -1232,36 +1293,60 @@ static void op_mov(struct opcode* op, struct cpu8086* cpu)
             cpu->cycles += 10;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_REGISTER:
-        case (DECODED_SEGREG << 2) | DECODED_REGISTER:
-        case (DECODED_REGISTER << 2) | DECODED_SEGREG:
+        case (DECODED_REGISTER << 3) | DECODED_REGISTER:
+        case (DECODED_SEGREG << 3) | DECODED_REGISTER:
+        case (DECODED_REGISTER << 3) | DECODED_SEGREG:
         {
             cpu->cycles += 2;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_MEMORY:
-        case (DECODED_SEGREG << 2) | DECODED_MEMORY:
+        case (DECODED_REGISTER << 3) | DECODED_MEMORY:
+        case (DECODED_SEGREG << 3) | DECODED_MEMORY:
         {
             cpu->cycles += 8;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_REGISTER:
-        case (DECODED_MEMORY << 2) | DECODED_SEGREG:
+        case (DECODED_MEMORY << 3) | DECODED_REGISTER:
+        case (DECODED_MEMORY << 3) | DECODED_SEGREG:
         {
             cpu->cycles += 9;
             break;
         }
-        case (DECODED_REGISTER << 2) | DECODED_IMMEDIATE:
-        case (DECODED_ACCUMULATOR << 2) | DECODED_IMMEDIATE:
+        case (DECODED_REGISTER << 3) | DECODED_IMMEDIATE:
+        case (DECODED_ACCUMULATOR << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 4;
             break;
         }
-        case (DECODED_MEMORY << 2) | DECODED_IMMEDIATE:
+        case (DECODED_MEMORY << 3) | DECODED_IMMEDIATE:
         {
             cpu->cycles += 10;
             break;
         }
+
+        // MOVS
+        case (DECODED_STRING << 3) | DECODED_STRING:
+        {
+            cpu->cycles += cpu->repeat ? 17 : 18;
+            break;
+        }
+        
+        // STOS
+        case (DECODED_STRING << 3) | DECODED_ACCUMULATOR:
+        {
+            cpu->cycles += cpu->repeat ? 10 : 11;
+            break;
+        }
+
+        // LODS
+        case (DECODED_ACCUMULATOR << 3) | DECODED_STRING:
+        {
+            cpu->cycles += cpu->repeat ? 13 : 12;
+            break;
+        }
+
+        default:
+            assert(false);
     }
 }
 
@@ -1696,12 +1781,17 @@ next_stage: // oh dear
             switch (byte)
             {
                 case PREFIX_G1_LOCK: 
+                {
                     // Currently doesn't do anything here, however it should 
                     // lock the bus after the 2nd cycle and is not unlocked
                     // until the first clock cycle of the next instruction.
+                    cpu->cycles = 1;
+                    return;
+                }
                 case PREFIX_G1_REPNZ:
                 case PREFIX_G1_REPZ:
                 {
+                    cpu->repeat = true;
                     cpu->prefix_g1 = byte;
                     cpu->cycles = 1;
                     return;
@@ -1719,12 +1809,17 @@ next_stage: // oh dear
 
             cpu->opcode_byte = byte;
             op = &op_table[cpu->opcode_byte];
+            if (cpu->repeat && !op->is_string)
+                cpu->repeat = false;
+
             if (op->destination == LOC_RM || op->source == LOC_RM)
                 cpu->stage = CPU8086_FETCH_MODRM;
-            else if (op->source == LOC_IMM || op->source == LOC_IMM8 || op->source == LOC_SEGOFF)
+            else if (op->source == LOC_IMM || op->source == LOC_IMM8)
                 cpu->stage = CPU8086_FETCH_IMM;
+            else if (op->destination == LOC_ADDR || op->source == LOC_ADDR || op->source == LOC_SEGOFF)
+                cpu->stage = CPU8086_FETCH_ADDRESS;
             else
-                cpu->stage = CPU8086_ADDRESS_MODE;
+                cpu->stage = CPU8086_DECODE_LOC;
             goto next_stage;
         }
 
@@ -1847,10 +1942,12 @@ next_stage: // oh dear
                 cpu->rm = ((*cpu8086_reg_word(cpu, prefix) << 4) + cpu->rm) & 0xFFFFF;
             }
 
-            if (op->source == LOC_IMM || op->source == LOC_IMM8 || op->source == LOC_SEGOFF)
+            if (op->source == LOC_IMM || op->source == LOC_IMM8)
                 cpu->stage = CPU8086_FETCH_IMM;
+            else if (op->destination == LOC_ADDR || op->source == LOC_ADDR || op->source == LOC_SEGOFF)
+                cpu->stage = CPU8086_FETCH_ADDRESS;
             else
-                cpu->stage = CPU8086_ADDRESS_MODE;
+                cpu->stage = CPU8086_DECODE_LOC;
             goto next_stage;
         }
 
@@ -1879,6 +1976,30 @@ next_stage: // oh dear
                 }
             }
 
+            cpu->immediate = op->is_word
+                           ? (cpu->imm16_byte << 8) | cpu->imm8_byte
+                           : cpu->imm8_byte;
+            cpu->stage = CPU8086_DECODE_LOC;
+            goto next_stage;
+        }
+
+        // Fetch an address. This will re-use the immediate variables.
+        case CPU8086_FETCH_ADDRESS:
+        {
+            if (cpu->imm8_byte == IMM8_NONE)
+            {
+                if (cpu->mt)
+                    return;
+                cpu->imm8_byte = cpu8086_prefetch_dequeue(cpu);
+            }
+
+            if (cpu->imm16_byte == IMM16_NONE)
+            {
+                if (cpu->mt)
+                    return;
+                cpu->imm16_byte = cpu8086_prefetch_dequeue(cpu);
+            }
+
             // This is used only for CALLFAR/JMPFAR (i.e. segment:offset).
             if (op->source == LOC_SEGOFF)
             {
@@ -1896,21 +2017,16 @@ next_stage: // oh dear
                 }
             }
 
-            if (op->is_word)
-            {
-                cpu->immediate = (cpu->imm16_byte << 8) | cpu->imm8_byte;
-                if (op->source == LOC_SEGOFF)
-                    cpu->immediate |= (cpu->hi_offset << 24) | (cpu->lo_offset << 16);
-            }
-            else
-                cpu->immediate = cpu->imm8_byte;
+            cpu->immediate = (cpu->imm16_byte << 8) | cpu->imm8_byte;
+            if (op->source == LOC_SEGOFF)
+                cpu->immediate |= (cpu->hi_offset << 24) | (cpu->lo_offset << 16);
 
-            cpu->stage = CPU8086_ADDRESS_MODE;
+            cpu->stage = CPU8086_DECODE_LOC;
             goto next_stage;
         }
 
         // Configure the destination and source addresses of the opcode.
-        case CPU8086_ADDRESS_MODE:
+        case CPU8086_DECODE_LOC:
         {
             loc_set(cpu, &cpu->destination, op->destination);
             loc_set(cpu, &cpu->source, op->source);
@@ -1922,7 +2038,38 @@ next_stage: // oh dear
         case CPU8086_EXECUTING:
         {
             assert(op->func);
+
+            if (cpu->repeat)
+                cpu->cycles += 9;
+
+exec_op:
+            if (cpu->repeat)
+            {
+                // No interrupt checks are carried out here (see the manual) because
+                // the string instructions are repeated all in one go and aren't
+                // cycle-accurate, so there's no point constantly checking for
+                // interrupts, especially if this is singlethreaded anyway.
+
+                if (cpu->cx == 0)
+                    return;
+                cpu->cx--;
+            }
+
             op->func(op, cpu);
+
+            if (cpu->repeat)
+            {
+                static const int delta_table[2][2] = { { 1, -1 }, { 2, -2 } };
+                int delta = delta_table[op->is_word][cpu8086_getflag(cpu, FLAG_DIRECTION)];
+                cpu->si += delta;
+                cpu->di += delta;
+
+                // TODO: check for CMPS/SCAS
+                // const bool z = (cpu->prefix_g1 == PREFIX_G1_REPZ) ? true : false;
+
+                goto exec_op; 
+            }
+
             cpu->cycles -= 1;   // For simplicity's sake, I decided to just copy the
                                 // cycles count of each instruction for all sets of
                                 // possible operands to each instruction. However,

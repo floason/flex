@@ -69,7 +69,8 @@ enum cpu8086_stage
     CPU8086_READY,
     CPU8086_FETCH_MODRM,
     CPU8086_FETCH_IMM,
-    CPU8086_ADDRESS_MODE,
+    CPU8086_FETCH_ADDRESS,
+    CPU8086_DECODE_LOC,
     CPU8086_EXECUTING
 };
 
@@ -79,7 +80,8 @@ enum location_type
     DECODED_REGISTER,
     DECODED_MEMORY,
     DECODED_IMMEDIATE,
-    DECODED_SEGREG
+    DECODED_SEGREG,
+    DECODED_STRING
 };
 
 struct location
@@ -161,6 +163,7 @@ struct cpu8086
     uint8_t mt              : 1;    // Is the queue empty?
 
     // Emulation execution variables.
+    bool repeat;                    // Is this a string instruction that repeats?
     uint16_t current_ip;            // The current instruction pointer, irrespective of the prefetch queue.
     uint8_t cycles;                 // How many cycles must the CPU pause for?
     uint8_t biu_prefetch_cycles;    // How many cycles remaining until the prefetch finishes?
