@@ -61,8 +61,8 @@
 #define DISP16_NONE     0xFFFF
 #define IMM8_NONE       0xFFFF
 #define IMM16_NONE      0xFFFF
-#define LO_OFFSET_NONE  0xFFFF
-#define HI_OFFSET_NONE  0xFFFF
+#define LO_SEGMENT_NONE 0xFFFF
+#define HI_SEGMENT_NONE 0xFFFF
 
 enum cpu8086_stage
 {
@@ -76,6 +76,7 @@ enum cpu8086_stage
 
 enum location_type
 {
+    DECODED_NULL,
     DECODED_ACCUMULATOR,
     DECODED_REGISTER,
     DECODED_MEMORY,
@@ -174,8 +175,8 @@ struct cpu8086
     uint16_t disp16_byte;           // Disp16 byte.
     uint16_t imm8_byte;             // Imm8 byte or lo segment byte.
     uint16_t imm16_byte;            // Imm16 byte or hi segment byte.
-    uint16_t lo_offset;             // Lo offset byte.
-    uint16_t hi_offset;             // Hi offset byte.
+    uint16_t lo_segment;            // Lo segment byte.
+    uint16_t hi_segment;            // Hi segment byte.
     uint32_t immediate;             // Calculated immediate.
     uintptr_t rm;                   // Calculated rm during ModRM stage.
     uintptr_t reg;                  // Calculated reg during ModRM stage.

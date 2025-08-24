@@ -9,7 +9,8 @@
 
 int main()
 {
-    printf("Hello world\n%ld\n%s\n%d.%d.%d\n", __STDC_VERSION__, GIT_HASH, MAJOR, MINOR, PATCH);
+    printf("this processor makes my brain hurt!!!!!!!!!!!!\n%ld\n%s\n%d.%d.%d\n", 
+        __STDC_VERSION__, GIT_HASH, MAJOR, MINOR, PATCH);
     struct bus* pc = bus_new(0x100000);
 
     /*

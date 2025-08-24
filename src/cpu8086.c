@@ -72,12 +72,16 @@ static void op_jp(struct opcode* op, struct cpu8086* cpu);
 static void op_js(struct opcode* op, struct cpu8086* cpu);
 static void op_lahf(struct opcode* op, struct cpu8086* cpu);
 static void op_lea(struct opcode* op, struct cpu8086* cpu);
+static void op_lds(struct opcode* op, struct cpu8086* cpu);
+static void op_les(struct opcode* op, struct cpu8086* cpu);
 static void op_mov(struct opcode* op, struct cpu8086* cpu);
 static void op_or(struct opcode* op, struct cpu8086* cpu);
 static void op_pop(struct opcode* op, struct cpu8086* cpu);
 static void op_popf(struct opcode* op, struct cpu8086* cpu);
 static void op_push(struct opcode* op, struct cpu8086* cpu);
 static void op_pushf(struct opcode* op, struct cpu8086* cpu);
+static void op_retnear(struct opcode* op, struct cpu8086* cpu);
+static void op_retfar(struct opcode* op, struct cpu8086* cpu);
 static void op_sahf(struct opcode* op, struct cpu8086* cpu);
 static void op_sbb(struct opcode* op, struct cpu8086* cpu);
 static void op_sub(struct opcode* op, struct cpu8086* cpu);
@@ -165,8 +169,7 @@ static struct opcode op_table[] =
     { "OR",     LOC_AL,     LOC_IMM,    false,  false,  op_or },
     { "OR",     LOC_AX,     LOC_IMM,    true,   false,  op_or },
     { "PUSH",   LOC_CS,     LOC_NULL,   true,   false,  op_push },
-    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },     // This may be a future consideration.
-                                                                    // (Should be pop cs?)
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },         // Should be POP CS?
     
     // 0x10 to 0x1F
     { "ADC",    LOC_RM,     LOC_REG,    false,  false,  op_adc },
@@ -193,7 +196,7 @@ static struct opcode op_table[] =
     { "AND",    LOC_REG,    LOC_RM,     true,   false,  op_and },
     { "AND",    LOC_AL,     LOC_IMM,    false,  false,  op_and },
     { "AND",    LOC_AX,     LOC_IMM,    true,   false,  op_and },
-    { "ES:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX ES:
+    { "ES:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },         // PREFIX ES:
     { "DAA",    LOC_NULL,   LOC_NULL,   false,  false,  op_daa },
     { "SUB",    LOC_RM,     LOC_REG,    false,  false,  op_sub },
     { "SUB",    LOC_RM,     LOC_REG,    true,   false,  op_sub },
@@ -201,7 +204,7 @@ static struct opcode op_table[] =
     { "SUB",    LOC_REG,    LOC_RM,     true,   false,  op_sub },
     { "SUB",    LOC_AL,     LOC_IMM,    false,  false,  op_sub },
     { "SUB",    LOC_AX,     LOC_IMM,    true,   false,  op_sub },
-    { "CS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX CS:
+    { "CS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },         // PREFIX CS:
     { "DAS",    LOC_NULL,   LOC_NULL,   false,  false,  op_das },
 
     // 0x30 to 0x3F
@@ -211,7 +214,7 @@ static struct opcode op_table[] =
     { "XOR",    LOC_REG,    LOC_RM,     true,   false,  op_xor },
     { "XOR",    LOC_AL,     LOC_IMM,    false,  false,  op_xor },
     { "XOR",    LOC_AX,     LOC_IMM,    true,   false,  op_xor },
-    { "SS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX SS:
+    { "SS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },         // PREFIX SS:
     { "AAA",    LOC_NULL,   LOC_NULL,   false,  false,  op_aaa },
     { "CMP",    LOC_RM,     LOC_REG,    false,  false,  op_cmp },
     { "CMP",    LOC_RM,     LOC_REG,    true,   false,  op_cmp },
@@ -219,7 +222,7 @@ static struct opcode op_table[] =
     { "CMP",    LOC_REG,    LOC_RM,     true,   false,  op_cmp },
     { "CMP",    LOC_AL,     LOC_IMM,    false,  false,  op_cmp },
     { "CMP",    LOC_AX,     LOC_IMM,    true,   false,  op_cmp },
-    { "DS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },     // PREFIX DS:
+    { "DS:",    LOC_NULL,   LOC_NULL,   false,  false,  NULL },         // PREFIX DS:
     { "AAS",    LOC_NULL,   LOC_NULL,   false,  false,  op_aas },
 
     // 0x40 to 0x4F
@@ -315,7 +318,7 @@ static struct opcode op_table[] =
     { "POP",    LOC_RM,     LOC_NULL,   true,   false,  op_pop },
 
     // 0x90 to 0x9F
-    { "NOP",    LOC_AX,     LOC_AX,     true,   false,  op_xchg },  // Technically XCHG AX AX.
+    { "NOP",    LOC_AX,     LOC_AX,     true,   false,  op_xchg },      // Technically XCHG AX AX.
     { "XCHG",   LOC_CX,     LOC_AX,     true,   false,  op_xchg },
     { "XCHG",   LOC_DX,     LOC_AX,     true,   false,  op_xchg },
     { "XCHG",   LOC_BX,     LOC_AX,     true,   false,  op_xchg },
@@ -367,6 +370,21 @@ static struct opcode op_table[] =
     { "MOV",    LOC_BP,     LOC_IMM,    true,   false,  op_mov },
     { "MOV",    LOC_SI,     LOC_IMM,    true,   false,  op_mov },
     { "MOV",    LOC_DI,     LOC_IMM,    true,   false,  op_mov },
+
+    // 0xC0 to 0xCF
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },         // Not sure what this is.
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },         // Nor this.
+    { "RET",    LOC_NULL,   LOC_IMM,    true,   false,  op_retnear },
+    { "RET",    LOC_NULL,   LOC_NULL,   true,   false,  op_retnear },
+    { "LES",    LOC_REG,    LOC_RM,     true,   false,  op_les },
+    { "LDS",    LOC_REG,    LOC_RM,     true,   false,  op_lds },
+    { "MOV",    LOC_RM,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_RM,     LOC_IMM,    true,   false,  op_mov },
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },         // Not sure what this is.
+    { "ILLEG.", LOC_NULL,   LOC_NULL,   true,   false,  NULL },         // Nor this.
+    { "RET",    LOC_NULL,   LOC_IMM,    true,   false,  op_retfar },
+    { "RET",    LOC_NULL,   LOC_NULL,   true,   false,  op_retfar },
+    
 };
 
 // IMM group opcode table.
@@ -598,7 +616,10 @@ static inline void loc_set(struct cpu8086* cpu,
             loc->virtual = true;
         }
         case LOC_NULL:
+        {
+            loc->type = DECODED_NULL;
             break;
+        }
     }
 }
 
@@ -632,8 +653,8 @@ static inline void cpu8086_reset_execution_regs(struct cpu8086* cpu)
     cpu->disp16_byte = DISP16_NONE;
     cpu->imm8_byte = IMM8_NONE;
     cpu->imm16_byte = IMM16_NONE;
-    cpu->lo_offset = LO_OFFSET_NONE;
-    cpu->hi_offset = HI_OFFSET_NONE;
+    cpu->lo_segment = LO_SEGMENT_NONE;
+    cpu->hi_segment = HI_SEGMENT_NONE;
     cpu->stage = CPU8086_READY;
     cpu->modrm_byte.value = MODRM_NONE;
 }
@@ -838,9 +859,9 @@ static void op_callfar(struct opcode* op, struct cpu8086* cpu)
     cpu8086_push(cpu, cpu->cs);
     cpu8086_push(cpu, cpu->current_ip);
 
-    uint16_t cs = loc_read(cpu, &cpu->source);
-    cpu->source.address += 2;
     uint16_t ip = loc_read(cpu, &cpu->source);
+    cpu->source.address += 2;
+    uint16_t cs = loc_read(cpu, &cpu->source);
     cpu8086_jump(cpu, cs, ip);
 
     // TODO: expand
@@ -1294,7 +1315,39 @@ static void op_lahf(struct opcode* op, struct cpu8086* cpu)
 static void op_lea(struct opcode* op, struct cpu8086* cpu)
 {
     assert(cpu->source.virtual); // TODO: how does this actually work?
+
     loc_write(cpu, &cpu->destination, cpu->source.address);
+    cpu->cycles += 2;
+}
+
+// LDS: load [mem32] into reg16 and [mem32 + 2] into ES
+static void op_lds(struct opcode* op, struct cpu8086* cpu)
+{
+    assert(cpu->source.virtual); // TODO: how does this actually work?
+
+    uint16_t offset = loc_read(cpu, &cpu->source);
+    cpu->source.address += 2;
+    uint16_t segment = loc_read(cpu, &cpu->source);
+
+    loc_write(cpu, &cpu->destination, offset);
+    cpu->es = segment;
+
+    cpu->cycles += 16;
+}
+
+// LES: load [mem32] into reg16 and [mem32 + 2] into ES
+static void op_les(struct opcode* op, struct cpu8086* cpu)
+{
+    assert(cpu->source.virtual); // TODO: how does this actually work?
+
+    uint16_t offset = loc_read(cpu, &cpu->source);
+    cpu->source.address += 2;
+    uint16_t segment = loc_read(cpu, &cpu->source);
+
+    loc_write(cpu, &cpu->destination, offset);
+    cpu->es = segment;
+
+    cpu->cycles += 16;
 }
 
 // MOV: copy from source to destination
@@ -1480,6 +1533,57 @@ static void op_pushf(struct opcode* op, struct cpu8086* cpu)
 {
     cpu8086_push(cpu, cpu->flags);
     cpu->cycles += 10;
+}
+
+// RET (near): pop the IP off the stack and release parameters off the stack
+// if the invoked procedure uses the stdcall calling convention.
+static void op_retnear(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t ip = cpu8086_pop(cpu);
+    cpu8086_jump(cpu, cpu->cs, ip);
+
+    switch (cpu->source.type)
+    {
+        case DECODED_NULL:
+        {
+            cpu->cycles += 8;
+            break;
+        }
+        case DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 12;
+            cpu->sp += loc_read(cpu, &cpu->source);
+            break;
+        }
+        default:
+            assert(false);
+    }
+}
+
+// RET (far): pop CS:IP off the stack and release parameters off the stack
+// if the invoked procedure uses the stdcall calling convention.
+static void op_retfar(struct opcode* op, struct cpu8086* cpu)
+{
+    uint16_t ip = cpu8086_pop(cpu);
+    uint16_t cs = cpu8086_pop(cpu);
+    cpu8086_jump(cpu, cs, ip);
+
+    switch (cpu->source.type)
+    {
+        case DECODED_NULL:
+        {
+            cpu->cycles += 18;
+            break;
+        }
+        case DECODED_IMMEDIATE:
+        {
+            cpu->cycles += 17;
+            cpu->sp += loc_read(cpu, &cpu->source);
+            break;
+        }
+        default:
+            assert(false);
+    }
 }
 
 // SAHF: store AH into FLAGS
@@ -2021,23 +2125,24 @@ next_stage: // oh dear
             // This is used only for CALLFAR/JMPFAR (i.e. segment:offset).
             if (op->source == LOC_SEGOFF)
             {
-                if (cpu->lo_offset == LO_OFFSET_NONE)
+                if (cpu->lo_segment == LO_SEGMENT_NONE)
                 {
                     if (cpu->mt)
                         return;
-                    cpu->lo_offset = cpu8086_prefetch_dequeue(cpu);
+                    cpu->lo_segment = cpu8086_prefetch_dequeue(cpu);
                 }
-                if (cpu->hi_offset == HI_OFFSET_NONE)
+                if (cpu->hi_segment == HI_SEGMENT_NONE)
                 {
                     if (cpu->mt)
                         return;
-                    cpu->hi_offset = cpu8086_prefetch_dequeue(cpu);
+                    cpu->hi_segment = cpu8086_prefetch_dequeue(cpu);
                 }
             }
 
-            cpu->immediate = (cpu->imm16_byte << 8) | cpu->imm8_byte;
-            if (op->source == LOC_SEGOFF)
-                cpu->immediate |= (cpu->hi_offset << 24) | (cpu->lo_offset << 16);
+            cpu->immediate = (op->source == LOC_SEGOFF)
+                           ? (cpu->imm16_byte << 24) | (cpu->imm8_byte << 16)
+                           | (cpu->hi_segment << 8) | cpu->lo_segment
+                           : (cpu->imm16_byte << 8) | cpu->imm8_byte;
 
             cpu->stage = CPU8086_DECODE_LOC;
             goto next_stage;
