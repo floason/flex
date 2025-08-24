@@ -349,6 +349,24 @@ static struct opcode op_table[] =
     { "LODSW",  LOC_AX,     LOC_STRSRC, true,   true,   op_mov },
     { "SCASB",  LOC_AL,     LOC_STRDST, false,  true,   op_cmp },
     { "SCASB",  LOC_AL,     LOC_STRDST, true,   true,   op_cmp },
+
+    // 0xB0 to 0xBF
+    { "MOV",    LOC_AL,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_CL,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_DL,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_BL,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_AH,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_CH,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_DH,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_BH,     LOC_IMM,    false,  false,  op_mov },
+    { "MOV",    LOC_AX,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_CX,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_DX,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_BX,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_SP,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_BP,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_SI,     LOC_IMM,    true,   false,  op_mov },
+    { "MOV",    LOC_DI,     LOC_IMM,    true,   false,  op_mov },
 };
 
 // IMM group opcode table.
